@@ -391,4 +391,20 @@ export class ReportingService {
 
     return deployed;
   }
+
+  async getAiModelVersionById(versionId: string): Promise<AiModelVersionDto> {
+    const v = await this.repository.findAiModelVersionById(versionId);
+    if (!v) {
+      throw new AppError("Không tìm thấy phiên bản mô hình AI", 404, ERROR_CODE.NOT_FOUND);
+    }
+    return v;
+  }
+
+  async getActiveModelVersion(): Promise<AiModelVersionDto> {
+    const v = await this.repository.findActiveDeployedModelVersion();
+    if (!v) {
+      throw new AppError("Chưa có phiên bản mô hình AI nào được triển khai", 404, ERROR_CODE.NOT_FOUND);
+    }
+    return v;
+  }
 }

@@ -360,4 +360,36 @@ export class ReportingController {
       return next(error);
     }
   };
+
+  getAiModelVersionById = async (
+    req: Request<{ versionId: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await this.service.getAiModelVersionById(req.params.versionId);
+      return res.status(200).json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  getActiveModelVersion = async (
+    _req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const data = await this.service.getActiveModelVersion();
+      return res.status(200).json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  };
 }

@@ -18,6 +18,7 @@ import {
   createAiModelVersionSchema,
   uuidParamSchema,
   modelVersionParamSchema,
+  versionIdParamSchema,
 } from "./reporting.validation";
 
 export const statisticRouter = Router();
@@ -127,6 +128,19 @@ reportRouter.get(
 // ── 3. AI Models & Governance Routes (/api/v1/ai-models) ─────────────────────
 
 aiModelRouter.use(authMiddleware);
+
+aiModelRouter.get(
+  "/active-version",
+  requirePermission(PERMISSIONS.PPE_MODEL_READ),
+  controller.getActiveModelVersion,
+);
+
+aiModelRouter.get(
+  "/versions/:versionId",
+  requirePermission(PERMISSIONS.PPE_MODEL_READ),
+  validate(versionIdParamSchema, "params"),
+  controller.getAiModelVersionById,
+);
 
 aiModelRouter.get(
   "/",

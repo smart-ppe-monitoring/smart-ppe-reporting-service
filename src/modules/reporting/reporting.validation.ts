@@ -263,3 +263,7 @@ export const modelVersionParamSchema = z.object({
   id: z.string().uuid("Invalid model ID parameter"),
   versionId: z.string().uuid("Invalid version ID parameter"),
 });
+
+export const versionIdParamSchema = z.object({
+  versionId: z.string().uuid("Invalid version ID parameter"),
+});
