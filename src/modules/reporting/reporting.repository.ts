@@ -1,4 +1,7 @@
-import { reportingPrisma } from "../../database/reporting.client";
+import {
+  reportingPrisma,
+  DEFAULT_REPORTING_TRANSACTION_OPTIONS,
+} from "../../database/reporting.client";
 import {
   calculatePaginationSkip,
   formatPaginationMeta,
@@ -990,7 +993,7 @@ export class ReportingRepository {
         deployedAt: updated.deployedAt?.toISOString() ?? null,
         createdAt: updated.createdAt.toISOString(),
       };
-    });
+    }, DEFAULT_REPORTING_TRANSACTION_OPTIONS);
   }
 
   async checkDatabaseHealth(): Promise<boolean> {

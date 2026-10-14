@@ -16,7 +16,7 @@ import { rateLimitMiddleware } from "./middlewares/rate-limit.middleware";
 import { requestIdMiddleware } from "./middlewares/request-id.middleware";
 import { maintenanceGuard } from "./middlewares/maintenance.middleware";
 import { envConfig } from "./config/env.config";
-import { reportingRepository } from "./modules/reporting/reporting.repository";
+import { reportingPrisma } from "./database/reporting.client";
 
 /**
  * Express Application cho Reporting & Analytics Microservice (:8894)
@@ -86,7 +86,13 @@ reportingApp.use(cookieParser());
 
 // 3. Health check endpoints cho Traefik Gateway & Monitoring
 const healthHandler = async (_req: express.Request, res: express.Response) => {
-  const isHealthy = await reportingRepository.checkDatabaseHealth();
+  let isHealthy = false;
+  try {
+    await reportingPrisma.$queryRaw`SELECT 1`;
+    isHealthy = true;
+  } catch {
+    isHealthy = false;
+  }
   const dbStatus = isHealthy ? "up" : "down";
 
   res.status(isHealthy ? 200 : 503).json({
