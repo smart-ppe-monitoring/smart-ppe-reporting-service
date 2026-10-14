@@ -91,10 +91,10 @@ export function buildOpenApiSpec(): Record<string, any> {
   return generator.generateDocument({
     openapi: "3.0.0",
     info: {
-      title: "Backend REST API",
+      title: "Smart PPE Monitoring - Reporting Service API",
       version: "1.0.0",
       description:
-        "Backend REST API Template (NodeJS, Express, TypeScript, Prisma, PostgreSQL). Cung cấp hệ thống xác thực, quản lý người dùng, Dynamic RBAC, Chế độ bảo trì hệ thống, Integrations & Webhooks, và System Configuration.",
+        "Dịch vụ Thống kê và Báo cáo Tuân thủ An toàn (Smart PPE Monitoring - Chuẩn D08). Tổng hợp số liệu vi phạm theo ngày/tuần/tháng, báo cáo PDF/Excel, quản trị AI models.",
       contact: { name: "Development Team" },
     },
     servers: [{ url: "/api/v1", description: "API v1 Root" }],
