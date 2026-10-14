@@ -10,15 +10,18 @@ const envSchema = z
     PORT: z.coerce.number().int().positive().default(9999),
 
     // ── Database (Database-per-Service Architecture) ─────────────────────────
-    IDENTITY_DATABASE_URL: z
-      .string()
-      .min(1, "IDENTITY_DATABASE_URL is required"),
-    // Các service DB URLs — optional vì không phải service nào cũng active đồng thời
+    IDENTITY_DATABASE_URL: z.string().optional(),
     SITE_DATABASE_URL: z.string().optional(),
     CAMERA_DATABASE_URL: z.string().optional(),
     INCIDENT_DATABASE_URL: z.string().optional(),
     NOTIFICATION_DATABASE_URL: z.string().optional(),
-    REPORTING_DATABASE_URL: z.string().optional(),
+    REPORTING_DATABASE_URL: z
+      .string()
+      .min(1, "REPORTING_DATABASE_URL is required")
+      .default(
+        process.env.DATABASE_URL ||
+          "postgresql://ppe_reporting_user:ppe_reporting_dev_pass@localhost:5433/ppe_reporting_db?schema=public",
+      ),
 
     // ── JWT ──────────────────────────────────────────────────────────────────
     JWT_ALGORITHM: z.enum(["RS256", "HS256"]).default("RS256"),
