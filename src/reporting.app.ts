@@ -17,6 +17,11 @@ import { requestIdMiddleware } from "./middlewares/request-id.middleware";
 import { maintenanceGuard } from "./middlewares/maintenance.middleware";
 import { envConfig } from "./config/env.config";
 import { reportingPrisma } from "./database/reporting.client";
+import { buildOpenApiSpec } from "./config/openapi/openapi.registry";
+import { registerReportingOpenApi } from "./modules/reporting/reporting.openapi";
+
+// Khởi tạo các định nghĩa OpenAPI
+registerReportingOpenApi();
 
 /**
  * Express Application cho Reporting & Analytics Microservice (:8894)
@@ -114,6 +119,10 @@ reportingApp.get("/api/v1/statistics/health", healthHandler);
 reportingApp.get("/statistics/health", healthHandler);
 reportingApp.get("/api/v1/ai-models/health", healthHandler);
 reportingApp.get("/ai-models/health", healthHandler);
+
+// 3.1 OpenAPI Specification Endpoint
+reportingApp.get("/openapi.json", (_req, res) => res.status(200).json(buildOpenApiSpec()));
+reportingApp.get("/api/v1/reports/openapi.json", (_req, res) => res.status(200).json(buildOpenApiSpec()));
 
 // 4. Mount Reporting, Statistics & AI Model Routes
 // Hỗ trợ dual-mount cả prefix /api/v1/... và /... khi qua Gateway hoặc gọi trực tiếp
