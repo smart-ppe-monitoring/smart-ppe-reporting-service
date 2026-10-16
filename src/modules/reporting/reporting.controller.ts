@@ -246,6 +246,8 @@ export class ReportingController {
     try {
       const download = await this.service.getReportGenerationDownload(
         req.params.id,
+        req.user?.id,
+        req.user?.role,
       );
       return res.status(200).json({
         success: true,

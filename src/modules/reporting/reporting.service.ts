@@ -24,6 +24,7 @@ import {
 } from "./reporting.dto";
 import { AppError } from "../../common/errors/app-error";
 import { ERROR_CODE } from "../../common/errors/error-code";
+import { ROLES } from "../../common/constants/role.constant";
 import {
   AUDIT_ACTION,
   AUDIT_TARGET_TYPE,
@@ -245,13 +246,26 @@ export class ReportingService {
     return this.repository.findReportGenerations(query);
   }
 
-  async getReportGenerationDownload(id: string) {
+  async getReportGenerationDownload(
+    id: string,
+    userId?: string,
+    userRole?: string,
+  ) {
     const report = await this.repository.findReportGenerationById(id);
     if (!report) {
       throw new AppError(
         "Report generation not found",
         404,
         ERROR_CODE.REPORT_GENERATION_NOT_FOUND,
+      );
+    }
+
+    // BOLA Guard: Chỉ tác giả tạo báo cáo hoặc Quản trị viên mới được tải xuống
+    if (userRole !== ROLES.ADMIN && (!userId || report.generatedBy !== userId)) {
+      throw new AppError(
+        "Bạn không có quyền tải xuống báo cáo này",
+        403,
+        ERROR_CODE.FORBIDDEN,
       );
     }
 

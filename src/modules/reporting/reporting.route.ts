@@ -68,7 +68,7 @@ statisticRouter.get(
 
 statisticRouter.post(
   "/record-ai-performance",
-  requirePermission(PERMISSIONS.PPE_AI_METRICS_READ),
+  requirePermission(PERMISSIONS.PPE_MODEL_MANAGE),
   validate(recordAiPerformanceSchema, "body"),
   controller.recordAiPerformance,
 );
