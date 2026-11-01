@@ -314,7 +314,9 @@ const _env = _parsed.data;
 
 /** Phân giải giá trị TRUST_PROXY sang kiểu mà Express chấp nhận */
 function parseTrustProxy(val: string): boolean | number | string | string[] {
-  if (val === "true") return true;
+  // SEC-18: Khi TRUST_PROXY='true', chỉ tin cậy 1 hop proxy trực tiếp (Traefik) thay vì true (tin cậy mọi hop)
+  // để chống tấn công Blind IP Spoofing qua header X-Forwarded-For giả mạo (CWE-345)
+  if (val === "true") return 1;
   if (val === "false") return false;
   if (/^\d+$/.test(val)) return parseInt(val, 10);
   if (val.includes(",")) return val.split(",").map((s) => s.trim());

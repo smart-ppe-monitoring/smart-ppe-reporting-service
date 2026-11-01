@@ -80,10 +80,13 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
     next: NextFunction,
   ): void | Promise<void> => {
     const clientIp = req.ip || req.socket.remoteAddress || "unknown";
-    const routePrefix = req.baseUrl || req.path || "";
+    const rawRoute = req.baseUrl || req.path || "";
+    // SEC-17: Chuẩn hóa route prefix bằng cách loại bỏ prefix '/api/v1' (ví dụ '/api/v1/statistics' -> '/statistics')
+    // nhằm ngăn chặn phân mảnh rate limit key và gian lận nhân đôi hạn mức trên các route dual-mounted.
+    const normalizedRoute = rawRoute.replace(/^\/api\/v1/, "") || "/";
     const key = options.keyGenerator
       ? options.keyGenerator(req)
-      : `${clientIp}:${routePrefix}`;
+      : `${clientIp}:${normalizedRoute}`;
     const now = Date.now();
 
     // 1. Nếu không có Redis (môi trường test hoặc Redis tắt), thực thi hoàn toàn đồng bộ
@@ -133,28 +136,29 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
     return (async () => {
       try {
         const redisKey = `ratelimit:${key}`;
-        const results = await redis
-          .multi()
-          .incr(redisKey)
-          .pttl(redisKey)
-          .exec();
+        // SEC-16: Thực thi nguyên tử bằng Redis Lua script để đảm bảo luôn gán TTL ngay khi tạo key,
+        // ngăn chặn triệt để tình trạng key bất tử (TTL = -1) gây khóa vĩnh viễn client khi có sự cố mạng.
+        const luaScript = `
+          local current = redis.call('INCR', KEYS[1])
+          local ttl = redis.call('PTTL', KEYS[1])
+          if current == 1 or ttl < 0 then
+            redis.call('PEXPIRE', KEYS[1], ARGV[1])
+            ttl = tonumber(ARGV[1])
+          end
+          return {current, ttl}
+        `;
+        const evalResult = (await redis.eval(
+          luaScript,
+          1,
+          redisKey,
+          windowMs,
+        )) as [number, number];
 
-        if (
-          results &&
-          results[0] &&
-          !results[0][0] &&
-          results[1] &&
-          !results[1][0]
-        ) {
-          const count = results[0][1] as number;
-          let pttl = results[1][1] as number;
+        if (Array.isArray(evalResult) && evalResult.length >= 2) {
+          const count = Number(evalResult[0]);
+          const pttl = Math.max(0, Number(evalResult[1]));
 
-          if (count === 1 || pttl < 0) {
-            await redis.pexpire(redisKey, windowMs);
-            pttl = windowMs;
-          }
-
-          const resetAt = now + Math.max(0, pttl);
+          const resetAt = now + pttl;
           const remaining = Math.max(0, maxRequests - count);
 
           res.setHeader("X-RateLimit-Limit", maxRequests);
