@@ -212,6 +212,26 @@ export class ReportingController {
     }
   };
 
+  deleteReportTemplate = async (
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      await this.service.deleteReportTemplate(req.params.id, {
+        actorId: req.user?.id,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+      return res.status(200).json({
+        success: true,
+        message: "Report template deleted successfully",
+      });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
   generateReport = async (
     req: Request<unknown, unknown, GenerateReportDto>,
     res: Response,

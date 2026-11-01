@@ -105,6 +105,13 @@ reportRouter.post(
   controller.createReportTemplate,
 );
 
+reportRouter.delete(
+  "/templates/:id",
+  requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),
+  validate(uuidParamSchema, "params"),
+  controller.deleteReportTemplate,
+);
+
 reportRouter.post(
   "/generate",
   requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),

@@ -1,3 +1,4 @@
+import type { PrismaClient as ReportingPrismaClient } from "@prisma/client-reporting";
 import {
   reportingPrisma,
   DEFAULT_REPORTING_TRANSACTION_OPTIONS,
@@ -58,8 +59,14 @@ function serializeAiPerformance(stat: any): AiPerformanceStatDto {
 }
 
 export class ReportingRepository {
-  private get prisma() {
-    return reportingPrisma;
+  private customPrisma?: ReportingPrismaClient;
+
+  constructor(customPrisma?: any) {
+    this.customPrisma = customPrisma;
+  }
+
+  private get prisma(): ReportingPrismaClient {
+    return (this.customPrisma || reportingPrisma) as ReportingPrismaClient;
   }
 
   // ── 1. Dashboard Summary & Incident Statistics ──────────────────────────────
@@ -676,6 +683,28 @@ export class ReportingRepository {
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),
     };
+  }
+
+  async deleteReportTemplate(id: string): Promise<void> {
+    try {
+      await this.prisma.reportTemplate.delete({
+        where: { id },
+      });
+    } catch (err: any) {
+      // SEC-08: Chặn xóa mẫu báo cáo khi đã có lịch sử xuất báo cáo pháp lý (onDelete: Restrict)
+      if (
+        err?.code === "P2003" ||
+        err?.message?.includes("foreign key constraint") ||
+        err?.message?.includes("report_generations_template_id_fkey")
+      ) {
+        throw new AppError(
+          "Không thể xóa mẫu báo cáo đã có lịch sử xuất báo cáo pháp lý. Vui lòng chuyển trạng thái sang INACTIVE",
+          400,
+          ERROR_CODE.VALIDATION_ERROR,
+        );
+      }
+      throw err;
+    }
   }
 
   // ── 8. Report Generations ──────────────────────────────────────────────────

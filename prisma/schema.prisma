@@ -42,7 +42,7 @@ model ReportGeneration {
   generatedAt  DateTime @default(now()) @map("generated_at")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  template ReportTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template ReportTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
 
   @@index([siteId, generatedAt])
   @@map("report_generations")

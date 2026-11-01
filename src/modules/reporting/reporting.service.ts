@@ -361,6 +361,33 @@ export class ReportingService {
     return created;
   }
 
+  async deleteReportTemplate(
+    id: string,
+    context?: { actorId?: string; ipAddress?: string; userAgent?: string },
+  ): Promise<void> {
+    const template = await this.repository.findReportTemplateById(id);
+    if (!template) {
+      throw new AppError(
+        "Report template not found",
+        404,
+        ERROR_CODE.REPORT_TEMPLATE_NOT_FOUND,
+      );
+    }
+
+    // SEC-08: Xóa template sẽ thất bại nếu template đã có bản ghi xuất báo cáo (onDelete: Restrict)
+    await this.repository.deleteReportTemplate(id);
+
+    await this.logAudit({
+      actorId: context?.actorId,
+      action: AUDIT_ACTION.DELETE_REPORT_TEMPLATE,
+      targetType: AUDIT_TARGET_TYPE.PPE_REPORT,
+      targetId: id,
+      details: { code: template.code, name: template.name },
+      ipAddress: context?.ipAddress,
+      userAgent: context?.userAgent,
+    });
+  }
+
   // ── 5. Report Generation & Export ──────────────────────────────────────────
 
   async generateReport(
