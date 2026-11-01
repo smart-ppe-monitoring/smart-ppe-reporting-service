@@ -6,7 +6,10 @@ import {
   calculatePaginationSkip,
   formatPaginationMeta,
 } from "../../common/helpers/pagination.helper";
-import { formatVietnamDate } from "../../common/helpers/date.helper";
+import {
+  formatVietnamDate,
+  getIsoWeekString,
+} from "../../common/helpers/date.helper";
 import {
   DashboardFilterDto,
   TrendsFilterDto,
@@ -167,14 +170,8 @@ export class ReportingRepository {
       let key = d.toISOString().slice(0, 10);
 
       if (groupBy === STATISTIC_GROUP_BY.WEEK) {
-        // Gom theo tuần ISO: YYYY-Www
-        const firstDayOfYear = new Date(d.getFullYear(), 0, 1);
-        const pastDaysOfYear =
-          (d.getTime() - firstDayOfYear.getTime()) / 86400000;
-        const weekNum = Math.ceil(
-          (pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7,
-        );
-        key = `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+        // SEC-37: Gom theo tuần ISO: YYYY-Www dùng thuật toán chuẩn ISO 8601
+        key = getIsoWeekString(d);
       } else if (groupBy === STATISTIC_GROUP_BY.MONTH) {
         key = d.toISOString().slice(0, 7); // YYYY-MM
       }
@@ -318,7 +315,8 @@ export class ReportingRepository {
 
       item.totalViolations += r.totalCount;
       item.confirmedCount += r.confirmedCount;
-      item.falseAlarmCount += Math.max(0, r.totalCount - r.confirmedCount);
+      // SEC-38: Không gán nhầm các vi phạm chưa kiểm duyệt thành cảnh báo sai
+      item.falseAlarmCount += (r as any).falseAlarmCount ?? 0;
       item.resolvedCount += r.resolvedCount;
       cameraMap.set(camId, item);
     }
@@ -538,8 +536,10 @@ export class ReportingRepository {
     severity: string;
     statDate: Date;
     totalCount: number;
-    confirmedCount: number;
-    resolvedCount: number;
+    confirmedCount?: number;
+    resolvedCount?: number;
+    falseAlarmCount?: number;
+    increment?: boolean;
   }) {
     // Tìm bản ghi phù hợp
     const existing = await this.prisma.reportStatistic.findFirst({
@@ -552,13 +552,16 @@ export class ReportingRepository {
       },
     });
 
+    const confirmedCount = data.confirmedCount ?? 0;
+    const resolvedCount = data.resolvedCount ?? 0;
+
     if (existing) {
       return this.prisma.reportStatistic.update({
         where: { id: existing.id },
         data: {
-          totalCount: data.totalCount,
-          confirmedCount: data.confirmedCount,
-          resolvedCount: data.resolvedCount,
+          totalCount: data.increment ? { increment: data.totalCount } : data.totalCount,
+          confirmedCount: data.increment ? { increment: confirmedCount } : confirmedCount,
+          resolvedCount: data.increment ? { increment: resolvedCount } : resolvedCount,
         },
       });
     }
@@ -571,8 +574,8 @@ export class ReportingRepository {
         severity: data.severity,
         statDate: data.statDate,
         totalCount: data.totalCount,
-        confirmedCount: data.confirmedCount,
-        resolvedCount: data.resolvedCount,
+        confirmedCount,
+        resolvedCount,
       },
     });
   }

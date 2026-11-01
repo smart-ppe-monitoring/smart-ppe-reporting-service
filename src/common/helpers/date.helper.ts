@@ -124,3 +124,23 @@ export function parseDurationToMs(
       return fallbackMs;
   }
 }
+
+/**
+ * SEC-37: Trả về chuỗi năm và số tuần chuẩn ISO 8601 (ví dụ: '2026-W44', '2022-W52').
+ * Tuần 1 theo ISO 8601 là tuần chứa ngày Thứ Năm đầu tiên của năm (hoặc chứa ngày 4 tháng 1).
+ * Một năm theo ISO 8601 chỉ có tối đa 52 hoặc 53 tuần.
+ */
+export function getIsoWeekString(date: Date): string {
+  const d = date instanceof Date ? date : new Date(date);
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNr = (target.getUTCDay() + 6) % 7; // Thứ 2 = 0, Chủ nhật = 6
+  target.setUTCDate(target.getUTCDate() - dayNr + 3); // Thứ 5 của tuần
+  const firstThursday = target.valueOf();
+  target.setUTCMonth(0, 1);
+  if (target.getUTCDay() !== 4) {
+    target.setUTCMonth(0, 1 + (((4 - target.getUTCDay()) + 7) % 7));
+  }
+  const weekNum = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
+  const weekYear = new Date(firstThursday).getUTCFullYear();
+  return `${weekYear}-W${String(weekNum).padStart(2, "0")}`;
+}

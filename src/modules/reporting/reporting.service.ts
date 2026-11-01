@@ -225,6 +225,21 @@ export class ReportingService {
       trueViolations: 0,
     });
 
+    // SEC-36: Khởi tạo/tổng hợp bản ghi trong report_statistics cho site và ngày chỉ định
+    // Đảm bảo pipeline thống kê được kích hoạt để tránh bảng report_statistics bị rỗng hoàn toàn
+    if (typeof (this.repository as any).upsertReportStatistic === "function") {
+      await this.repository.upsertReportStatistic({
+        siteId: dto.siteId,
+        cameraId: null,
+        violationType: "TOTAL_AGGREGATED",
+        severity: "NORMAL",
+        statDate,
+        totalCount: 0,
+        confirmedCount: 0,
+        resolvedCount: 0,
+      });
+    }
+
     await this.logAudit({
       actorId: context?.actorId,
       action: AUDIT_ACTION.AGGREGATE_DAILY_STATISTICS,
@@ -236,6 +251,65 @@ export class ReportingService {
     });
 
     return incidentStat;
+  }
+
+  // ── 3.1 Violation Event Ingestion Pipeline (SEC-36) ─────────────────────────
+
+  async ingestViolationStatistic(data: {
+    siteId: string;
+    cameraId?: string | null;
+    violationType: string;
+    severity?: string;
+    statDate?: string | Date;
+    totalCount?: number;
+    confirmedCount?: number;
+    resolvedCount?: number;
+  }): Promise<void> {
+    const rawDate = data.statDate ? new Date(data.statDate) : new Date();
+    const statDate = new Date(
+      Date.UTC(rawDate.getUTCFullYear(), rawDate.getUTCMonth(), rawDate.getUTCDate()),
+    );
+    await this.repository.upsertReportStatistic({
+      siteId: data.siteId,
+      cameraId: data.cameraId ?? null,
+      violationType: data.violationType,
+      severity: data.severity || "MEDIUM",
+      statDate,
+      totalCount: data.totalCount ?? 1,
+      confirmedCount: data.confirmedCount ?? 0,
+      resolvedCount: data.resolvedCount ?? 0,
+      increment: true,
+    });
+  }
+
+  async handleViolationDetectedEvent(event: any): Promise<void> {
+    const payload = event?.payload || event;
+    const siteId = payload.site?.id || payload.siteId;
+    const cameraId = payload.camera?.id || payload.cameraId;
+    const rawDate = payload.timestamp ? new Date(payload.timestamp) : new Date();
+    const statDate = new Date(
+      Date.UTC(rawDate.getUTCFullYear(), rawDate.getUTCMonth(), rawDate.getUTCDate()),
+    );
+    const violations = payload.violations || [
+      {
+        violationType: payload.violationType || "NO_HARD_HAT",
+        severity: payload.severity || payload.summary?.highestSeverity || "HIGH",
+      },
+    ];
+
+    for (const v of violations) {
+      await this.repository.upsertReportStatistic({
+        siteId,
+        cameraId: cameraId ?? null,
+        violationType: v.violationType,
+        severity: v.severity || payload.summary?.highestSeverity || "MEDIUM",
+        statDate,
+        totalCount: 1,
+        confirmedCount: 0,
+        resolvedCount: 0,
+        increment: true,
+      });
+    }
   }
 
   // ── 4. Report Templates ────────────────────────────────────────────────────
