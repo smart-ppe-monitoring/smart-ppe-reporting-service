@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { envConfig } from "../../config/env.config";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96-bit IV chuẩn cho GCM
@@ -6,12 +7,17 @@ const AUTH_TAG_LENGTH = 16; // 128-bit auth tag
 
 /**
  * Trích xuất / chuẩn hóa 32-byte key từ master key string qua SHA-256.
+ * SEC-27: Không đọc process.env trực tiếp và không fallback về chuỗi tĩnh hardcoded công khai.
+ * Sử dụng envConfig.encryption.key đã được kiểm tra tính hợp lệ và fail-fast trong production.
  */
-function getMasterKeyBuffer(customKey?: string): Buffer {
+export function getMasterKeyBuffer(customKey?: string): Buffer {
   const rawKey =
     customKey ||
-    process.env.ENCRYPTION_KEY ||
-    "default-smart-ppe-master-encryption-key-32b";
+    envConfig.encryption?.key ||
+    (envConfig as any).encryptionKey;
+  if (!rawKey) {
+    throw new Error("Master encryption key is not configured");
+  }
   return crypto.createHash("sha256").update(rawKey).digest();
 }
 

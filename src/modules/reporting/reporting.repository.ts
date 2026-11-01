@@ -386,6 +386,20 @@ export class ReportingRepository {
     const normalizedDate = new Date(statDateString);
     const frameCount = BigInt(dto.frameCount || 1);
 
+    // SEC-34: Xác thực sự tồn tại của modelVersionId trong cơ sở dữ liệu nếu được cung cấp
+    if (dto.modelVersionId && this.prisma.aiModelVersion) {
+      const version = await this.prisma.aiModelVersion.findUnique({
+        where: { id: dto.modelVersionId },
+      });
+      if (!version) {
+        throw new AppError(
+          "AI Model Version not found",
+          404,
+          ERROR_CODE.AI_MODEL_VERSION_NOT_FOUND,
+        );
+      }
+    }
+
     const applyWeightedUpdate = async (existing: any) => {
       const prevTotalFrames = existing.totalFrames;
       const newTotalFrames = prevTotalFrames + frameCount;
@@ -462,6 +476,19 @@ export class ReportingRepository {
 
       return serializeAiPerformance(created);
     } catch (error: any) {
+      // SEC-34: Bắt lỗi khóa ngoại nếu modelVersionId không tồn tại hoặc bị xóa đồng thời
+      if (
+        error?.code === "P2003" ||
+        error?.message?.includes("foreign key constraint") ||
+        error?.message?.includes("ai_performance_statistics_model_version_id_fkey")
+      ) {
+        throw new AppError(
+          "AI Model Version not found",
+          404,
+          ERROR_CODE.AI_MODEL_VERSION_NOT_FOUND,
+        );
+      }
+
       // Xử lý race condition khi 2 request gửi đồng thời (P2002 Unique constraint violation)
       if (
         error?.code === "P2002" ||
