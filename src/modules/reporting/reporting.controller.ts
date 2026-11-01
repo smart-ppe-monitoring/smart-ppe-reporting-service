@@ -29,7 +29,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const summary = await this.service.getDashboardSummary(req.query);
+      const summary = await this.service.getDashboardSummary(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: summary,
@@ -45,7 +48,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const trends = await this.service.getViolationTrends(req.query);
+      const trends = await this.service.getViolationTrends(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: trends,
@@ -63,6 +69,7 @@ export class ReportingController {
     try {
       const distribution = await this.service.getViolationDistribution(
         req.query,
+        req.user,
       );
       return res.status(200).json({
         success: true,
@@ -79,7 +86,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const rankings = await this.service.getCameraRankings(req.query);
+      const rankings = await this.service.getCameraRankings(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: rankings,
@@ -132,6 +142,8 @@ export class ReportingController {
     try {
       const result = await this.service.aggregateDailyStats(req.body, {
         actorId: req.user?.id,
+        actorRole: req.user?.role,
+        actorSiteIds: req.user?.siteIds,
         ipAddress: req.ip,
         userAgent: req.get("user-agent"),
       });
@@ -227,7 +239,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const result = await this.service.listReportGenerations(req.query);
+      const result = await this.service.listReportGenerations(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: result.data,

@@ -10,6 +10,19 @@ import {
 const dateRegex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const semverRegex = /^v?\d+\.\d+\.\d+$/;
 const codeRegex = /^[A-Za-z0-9_.-]+$/;
+const MAX_DATE_RANGE_DAYS = 90;
+
+export function isDateRangeWithinDays(
+  startDate?: string,
+  endDate?: string,
+  maxDays = MAX_DATE_RANGE_DAYS,
+): boolean {
+  if (!startDate || !endDate) return true;
+  const start = new Date(startDate).getTime();
+  const end = new Date(endDate).getTime();
+  const diffDays = (end - start) / (1000 * 3600 * 24);
+  return diffDays <= maxDays;
+}
 
 // ── 1. Statistics & KPI Filter Schemas ────────────────────────────────────────
 
@@ -34,6 +47,13 @@ export const dashboardFilterSchema = z
     },
     {
       message: "endDate must be equal to or greater than startDate",
+      path: ["endDate"],
+    },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
       path: ["endDate"],
     },
   );
@@ -68,6 +88,13 @@ export const trendsFilterSchema = z
       message: "endDate must be equal to or greater than startDate",
       path: ["endDate"],
     },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
+      path: ["endDate"],
+    },
   );
 
 export const cameraStatsFilterSchema = z
@@ -94,6 +121,13 @@ export const cameraStatsFilterSchema = z
       message: "endDate must be equal to or greater than startDate",
       path: ["endDate"],
     },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
+      path: ["endDate"],
+    },
   );
 
 export const aiPerformanceFilterSchema = z
@@ -117,6 +151,13 @@ export const aiPerformanceFilterSchema = z
     },
     {
       message: "endDate must be equal to or greater than startDate",
+      path: ["endDate"],
+    },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
       path: ["endDate"],
     },
   );

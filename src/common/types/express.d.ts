@@ -8,6 +8,8 @@ declare global {
         role: string;
         roleId?: string;
         permissions?: string[];
+        siteIds?: string[];
+        siteId?: string;
       };
       apiKey?: {
         id: string;

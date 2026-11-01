@@ -80,6 +80,7 @@ export class ReportingRepository {
 
     const rows = await this.prisma.incidentStatistic.findMany({
       where,
+      take: 5000,
     });
 
     let totalIncidents = 0;
@@ -146,6 +147,7 @@ export class ReportingRepository {
     const rows = await this.prisma.incidentStatistic.findMany({
       where,
       orderBy: { statDate: "asc" },
+      take: 5000,
     });
 
     const groupBy = filter.groupBy || STATISTIC_GROUP_BY.DAY;
@@ -208,6 +210,7 @@ export class ReportingRepository {
 
     const rows = await this.prisma.reportStatistic.findMany({
       where,
+      take: 5000,
     });
 
     const breakdownMap = new Map<
@@ -282,6 +285,7 @@ export class ReportingRepository {
 
     const rows = await this.prisma.reportStatistic.findMany({
       where,
+      take: 5000,
     });
 
     const cameraMap = new Map<
@@ -347,6 +351,7 @@ export class ReportingRepository {
     const rows = await this.prisma.aiPerformanceStatistic.findMany({
       where,
       orderBy: { statDate: "desc" },
+      take: 5000,
     });
 
     return rows.map(serializeAiPerformance);
@@ -468,6 +473,20 @@ export class ReportingRepository {
   }
 
   // ── 6. Daily Rollup Aggregation ────────────────────────────────────────────
+
+  async findIncidentStatistic(
+    siteId: string,
+    statDate: Date,
+  ) {
+    return this.prisma.incidentStatistic.findUnique({
+      where: {
+        siteId_statDate: {
+          siteId,
+          statDate,
+        },
+      },
+    });
+  }
 
   async upsertIncidentStatistic(data: {
     siteId: string;
@@ -680,7 +699,7 @@ export class ReportingRepository {
       periodEnd: gen.periodEnd.toISOString().slice(0, 10),
       generatedBy: gen.generatedBy,
       status: gen.status,
-      filePath: gen.filePath,
+      filePath: undefined, // SEC-12: Không để lộ đường dẫn tệp tin nội bộ ra API công khai
       fileName: gen.fileName,
       errorMessage: gen.errorMessage,
       generatedAt: gen.generatedAt.toISOString(),
@@ -717,7 +736,7 @@ export class ReportingRepository {
       periodEnd: gen.periodEnd.toISOString().slice(0, 10),
       generatedBy: gen.generatedBy,
       status: gen.status,
-      filePath: gen.filePath,
+      filePath: undefined, // SEC-12: Không để lộ đường dẫn tệp tin nội bộ ra API công khai
       fileName: gen.fileName,
       errorMessage: gen.errorMessage,
       generatedAt: gen.generatedAt.toISOString(),
@@ -776,7 +795,7 @@ export class ReportingRepository {
       periodEnd: gen.periodEnd.toISOString().slice(0, 10),
       generatedBy: gen.generatedBy,
       status: gen.status,
-      filePath: gen.filePath,
+      filePath: undefined, // SEC-12: Không để lộ đường dẫn tệp tin nội bộ ra API công khai
       fileName: gen.fileName,
       errorMessage: gen.errorMessage,
       generatedAt: gen.generatedAt.toISOString(),

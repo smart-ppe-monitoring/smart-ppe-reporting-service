@@ -82,28 +82,69 @@ export class ReportingService {
     }
   }
 
+  private resolveTenantSiteFilter<T extends { siteId?: string }>(
+    filter: T,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
+  ): T {
+    if (!user || user.role === ROLES.ADMIN) {
+      return filter;
+    }
+
+    const permittedSites = user.siteIds || (user.siteId ? [user.siteId] : []);
+    if (permittedSites.length === 0) {
+      return filter;
+    }
+
+    if (filter.siteId && !permittedSites.includes(filter.siteId)) {
+      throw new AppError(
+        "Bạn không có quyền truy cập dữ liệu thống kê của cơ sở này",
+        403,
+        ERROR_CODE.FORBIDDEN,
+      );
+    }
+
+    if (!filter.siteId && permittedSites.length > 0) {
+      return {
+        ...filter,
+        siteId: permittedSites[0],
+      };
+    }
+
+    return filter;
+  }
+
   // ── 1. Dashboard Statistics & Overview KPIs ─────────────────────────────────
 
   async getDashboardSummary(
     filter: DashboardFilterDto,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
   ): Promise<StatisticsSummaryDto> {
-    return this.repository.getIncidentSummary(filter);
+    const scopedFilter = this.resolveTenantSiteFilter(filter, user);
+    return this.repository.getIncidentSummary(scopedFilter);
   }
 
-  async getViolationTrends(filter: TrendsFilterDto): Promise<TrendItemDto[]> {
-    return this.repository.getIncidentTrends(filter);
+  async getViolationTrends(
+    filter: TrendsFilterDto,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
+  ): Promise<TrendItemDto[]> {
+    const scopedFilter = this.resolveTenantSiteFilter(filter, user);
+    return this.repository.getIncidentTrends(scopedFilter);
   }
 
   async getViolationDistribution(
     filter: DashboardFilterDto,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
   ): Promise<ViolationTypeStatDto[]> {
-    return this.repository.getViolationBreakdown(filter);
+    const scopedFilter = this.resolveTenantSiteFilter(filter, user);
+    return this.repository.getViolationBreakdown(scopedFilter);
   }
 
   async getCameraRankings(
     filter: CameraStatsFilterDto,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
   ): Promise<CameraStatDto[]> {
-    return this.repository.getCameraRankings(filter);
+    const scopedFilter = this.resolveTenantSiteFilter(filter, user);
+    return this.repository.getCameraRankings(scopedFilter);
   }
 
   // ── 2. AI Performance Statistics & Telemetry ───────────────────────────────
@@ -136,9 +177,39 @@ export class ReportingService {
 
   async aggregateDailyStats(
     dto: AggregateDailyDto,
-    context?: { actorId?: string; ipAddress?: string; userAgent?: string },
+    context?: {
+      actorId?: string;
+      actorRole?: string;
+      actorSiteIds?: string[];
+      ipAddress?: string;
+      userAgent?: string;
+    },
   ) {
+    if (context?.actorRole && context.actorRole !== ROLES.ADMIN) {
+      const permittedSites = context.actorSiteIds || [];
+      if (permittedSites.length > 0 && !permittedSites.includes(dto.siteId)) {
+        throw new AppError(
+          "Bạn không có quyền thực hiện tổng hợp dữ liệu cho cơ sở này",
+          403,
+          ERROR_CODE.FORBIDDEN,
+        );
+      }
+    }
+
     const statDate = new Date(dto.statDate);
+
+    // SEC-07: Đảm bảo không ghi đè dữ liệu bằng số 0 nếu bản ghi đã tồn tại và có số liệu
+    const existing = await this.repository.findIncidentStatistic(
+      dto.siteId,
+      statDate,
+    );
+    if (existing && existing.totalIncidents > 0) {
+      throw new AppError(
+        "Dữ liệu thống kê cho ngày này đã được chốt và không thể ghi đè",
+        409,
+        ERROR_CODE.DUPLICATE_ENTRY,
+      );
+    }
 
     // Rollup mẫu tổng hợp
     const incidentStat = await this.repository.upsertIncidentStatistic({
@@ -255,8 +326,25 @@ export class ReportingService {
 
   async listReportGenerations(
     query: ReportHistoryQueryDto,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
   ): Promise<PaginatedResultDto<ReportGenerationDto>> {
-    return this.repository.findReportGenerations(query);
+    const scopedQuery = { ...query };
+    if (user && user.role !== ROLES.ADMIN) {
+      const permittedSites = user.siteIds || (user.siteId ? [user.siteId] : []);
+      if (permittedSites.length > 0) {
+        if (scopedQuery.siteId && !permittedSites.includes(scopedQuery.siteId)) {
+          throw new AppError(
+            "Bạn không có quyền xem lịch sử báo cáo của cơ sở này",
+            403,
+            ERROR_CODE.FORBIDDEN,
+          );
+        }
+        if (!scopedQuery.siteId) {
+          scopedQuery.siteId = permittedSites[0];
+        }
+      }
+    }
+    return this.repository.findReportGenerations(scopedQuery);
   }
 
   async getReportGenerationDownload(

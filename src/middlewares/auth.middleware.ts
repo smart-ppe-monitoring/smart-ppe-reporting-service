@@ -120,6 +120,12 @@ export async function authMiddleware(
       permissions: Array.isArray(payload.permissions)
         ? payload.permissions
         : undefined,
+      siteIds: Array.isArray(payload.siteIds)
+        ? payload.siteIds
+        : payload.siteId
+        ? [payload.siteId]
+        : undefined,
+      siteId: payload.siteId,
     };
 
     next();
