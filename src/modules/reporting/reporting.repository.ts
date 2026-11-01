@@ -31,9 +31,12 @@ import {
 } from "./reporting.dto";
 import {
   REPORT_STATUS,
+  AI_MODEL_STATUS,
   AI_MODEL_VERSION_STATUS,
   STATISTIC_GROUP_BY,
 } from "../../common/constants/reporting.constant";
+import { AppError } from "../../common/errors/app-error";
+import { ERROR_CODE } from "../../common/errors/error-code";
 
 function serializeAiPerformance(stat: any): AiPerformanceStatDto {
   return {
@@ -352,6 +355,14 @@ export class ReportingRepository {
   async recordAiPerformanceMetric(
     dto: RecordAiPerformanceDto,
   ): Promise<AiPerformanceStatDto> {
+    if (!Number.isFinite(dto.fps) || !Number.isFinite(dto.latencyMs)) {
+      throw new AppError(
+        "Dữ liệu hiệu năng không hợp lệ (phải là số thực hữu hạn)",
+        400,
+        ERROR_CODE.VALIDATION_ERROR,
+      );
+    }
+
     const statDateString =
       dto.statDate || formatVietnamDate(new Date(), "YYYY-MM-DD");
     const normalizedDate = new Date(statDateString);
@@ -382,6 +393,14 @@ export class ReportingRepository {
         existing.maxLatencyMs,
         Math.round(dto.latencyMs),
       );
+
+      if (!Number.isFinite(updatedAvgFps) || !Number.isFinite(updatedAvgLatency)) {
+        throw new AppError(
+          "Dữ liệu hiệu năng tính toán không hợp lệ (vượt quá giới hạn)",
+          400,
+          ERROR_CODE.VALIDATION_ERROR,
+        );
+      }
 
       const updated = await this.prisma.aiPerformanceStatistic.update({
         where: { id: existing.id },
@@ -917,20 +936,23 @@ export class ReportingRepository {
     modelId?: string;
     modelType?: string;
   }): Promise<AiModelVersionDto | null> {
+    const modelFilter: any = {
+      status: AI_MODEL_STATUS.ACTIVE,
+    };
+
+    if (filter?.modelType) {
+      modelFilter.modelType = filter.modelType;
+    }
+
     const where: any = {
       status: "DEPLOYED",
       deployedAt: { not: null },
       modelPath: { not: null },
+      model: modelFilter,
     };
 
     if (filter?.modelId) {
       where.modelId = filter.modelId;
-    }
-
-    if (filter?.modelType) {
-      where.model = {
-        modelType: filter.modelType,
-      };
     }
 
     const v = await this.prisma.aiModelVersion.findFirst({

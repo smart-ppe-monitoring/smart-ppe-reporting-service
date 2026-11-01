@@ -140,6 +140,7 @@ export const recordAiPerformanceSchema = z.object({
     .number()
     .int()
     .positive("frameCount must be positive integer")
+    .max(1_000_000, "frameCount cannot exceed 1,000,000 per report")
     .default(1),
 });
 

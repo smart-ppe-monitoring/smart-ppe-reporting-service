@@ -25,6 +25,7 @@ import {
 import { AppError } from "../../common/errors/app-error";
 import { ERROR_CODE } from "../../common/errors/error-code";
 import { ROLES } from "../../common/constants/role.constant";
+import { AI_MODEL_STATUS } from "../../common/constants/reporting.constant";
 import {
   AUDIT_ACTION,
   AUDIT_TARGET_TYPE,
@@ -116,6 +117,18 @@ export class ReportingService {
   async recordAiPerformance(
     dto: RecordAiPerformanceDto,
   ): Promise<AiPerformanceStatDto> {
+    if (dto.modelVersionId) {
+      const version = await this.repository.findAiModelVersionById(
+        dto.modelVersionId,
+      );
+      if (!version) {
+        throw new AppError(
+          "AI Model Version not found",
+          404,
+          ERROR_CODE.AI_MODEL_VERSION_NOT_FOUND,
+        );
+      }
+    }
     return this.repository.recordAiPerformanceMetric(dto);
   }
 
@@ -391,6 +404,14 @@ export class ReportingService {
         "AI Model not found",
         404,
         ERROR_CODE.AI_MODEL_NOT_FOUND,
+      );
+    }
+
+    if (model.status !== AI_MODEL_STATUS.ACTIVE) {
+      throw new AppError(
+        "Không thể triển khai phiên bản của mô hình AI đã bị vô hiệu hóa hoặc ngừng sử dụng",
+        400,
+        ERROR_CODE.VALIDATION_ERROR,
       );
     }
 

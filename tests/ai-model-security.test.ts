@@ -139,6 +139,7 @@ describe("Security Patch Verification: SEC-05 & SEC-06", () => {
 
       assert.equal(capturedWhere.modelId, "0192e21b-8321-789a-bcde-000000000099");
       assert.deepEqual(capturedWhere.model, {
+        status: "ACTIVE",
         modelType: AI_MODEL_TYPE.OBJECT_DETECTION,
       });
     });
