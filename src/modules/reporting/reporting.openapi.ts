@@ -320,6 +320,20 @@ export function registerReportingOpenApi(): void {
     },
   });
 
+  openapiRegistry.registerPath({
+    method: "get",
+    path: "/reports/{id}/content",
+    tags: ["Reports"],
+    summary: "Tải trực tiếp nội dung tệp tin báo cáo đã xuất (PDF/Excel)",
+    security: [{ BearerAuth: [] }],
+    request: { params: uuidParamSchema },
+    responses: {
+      200: {
+        description: "Tải tệp tin báo cáo thành công",
+      },
+    },
+  });
+
   // ── AI Models Governance Endpoints ─────────────────────────────────────────
 
   openapiRegistry.registerPath({

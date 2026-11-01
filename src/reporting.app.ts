@@ -13,7 +13,10 @@ import {
   aiModelRouter,
 } from "./modules/reporting/reporting.route";
 import { rateLimitMiddleware } from "./middlewares/rate-limit.middleware";
-import { requestIdMiddleware } from "./middlewares/request-id.middleware";
+import {
+  requestIdMiddleware,
+  requireGatewayOrigin,
+} from "./middlewares/request-id.middleware";
 import { maintenanceGuard } from "./middlewares/maintenance.middleware";
 import { envConfig } from "./config/env.config";
 import { reportingPrisma } from "./database/reporting.client";
@@ -90,14 +93,48 @@ reportingApp.use(express.urlencoded({ extended: true, limit: "2mb" }));
 reportingApp.use(cookieParser());
 
 // 3. Health check endpoints cho Traefik Gateway & Monitoring
-const healthHandler = async (_req: express.Request, res: express.Response) => {
-  let isHealthy = false;
-  try {
-    await reportingPrisma.$queryRaw`SELECT 1`;
-    isHealthy = true;
-  } catch {
-    isHealthy = false;
+// SEC-10: Caching trạng thái sức khỏe CSDL với TTL 5s để chống DoS connection pool starvation
+let lastHealthCheckTime = 0;
+let lastHealthStatus = true;
+let customHealthChecker: (() => Promise<boolean>) | null = null;
+const DB_HEALTH_CACHE_TTL_MS = 5000;
+
+export function setCustomHealthChecker(
+  checker: (() => Promise<boolean>) | null,
+): void {
+  customHealthChecker = checker;
+}
+
+export function resetDatabaseHealthCache(): void {
+  lastHealthCheckTime = 0;
+  lastHealthStatus = true;
+  customHealthChecker = null;
+}
+
+export const checkDatabaseHealth = async (): Promise<boolean> => {
+  const now = Date.now();
+  if (now - lastHealthCheckTime > DB_HEALTH_CACHE_TTL_MS) {
+    if (customHealthChecker) {
+      try {
+        lastHealthStatus = await customHealthChecker();
+      } catch {
+        lastHealthStatus = false;
+      }
+    } else {
+      try {
+        await reportingPrisma.$queryRaw`SELECT 1`;
+        lastHealthStatus = true;
+      } catch {
+        lastHealthStatus = false;
+      }
+    }
+    lastHealthCheckTime = now;
   }
+  return lastHealthStatus;
+};
+
+export const healthHandler = async (_req: express.Request, res: express.Response) => {
+  const isHealthy = await checkDatabaseHealth();
   const dbStatus = isHealthy ? "up" : "down";
 
   res.status(isHealthy ? 200 : 503).json({
@@ -125,6 +162,10 @@ if (envConfig.nodeEnv !== "production") {
   reportingApp.get("/openapi.json", (_req, res) => res.status(200).json(buildOpenApiSpec()));
   reportingApp.get("/api/v1/reports/openapi.json", (_req, res) => res.status(200).json(buildOpenApiSpec()));
 }
+
+// 3.2 Gateway Origin Guard (SEC-19)
+// Bảo vệ cổng nội bộ 8894 — chỉ chấp nhận request từ API Gateway tin cậy khi có GATEWAY_INTERNAL_SECRET
+reportingApp.use(requireGatewayOrigin);
 
 // 4. Mount Reporting, Statistics & AI Model Routes
 // Hỗ trợ dual-mount cả prefix /api/v1/... và /... khi qua Gateway hoặc gọi trực tiếp

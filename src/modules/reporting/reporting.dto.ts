@@ -216,3 +216,8 @@ export interface CreateAiModelVersionDto {
     [key: string]: any;
   };
 }
+
+export interface ActiveModelVersionQueryDto {
+  modelId?: string;
+  modelType?: string;
+}

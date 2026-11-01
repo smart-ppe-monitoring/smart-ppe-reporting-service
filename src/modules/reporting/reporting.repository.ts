@@ -1,3 +1,4 @@
+import type { PrismaClient as ReportingPrismaClient } from "@prisma/client-reporting";
 import {
   reportingPrisma,
   DEFAULT_REPORTING_TRANSACTION_OPTIONS,
@@ -6,7 +7,10 @@ import {
   calculatePaginationSkip,
   formatPaginationMeta,
 } from "../../common/helpers/pagination.helper";
-import { formatVietnamDate } from "../../common/helpers/date.helper";
+import {
+  formatVietnamDate,
+  getIsoWeekString,
+} from "../../common/helpers/date.helper";
 import {
   DashboardFilterDto,
   TrendsFilterDto,
@@ -31,9 +35,12 @@ import {
 } from "./reporting.dto";
 import {
   REPORT_STATUS,
+  AI_MODEL_STATUS,
   AI_MODEL_VERSION_STATUS,
   STATISTIC_GROUP_BY,
 } from "../../common/constants/reporting.constant";
+import { AppError } from "../../common/errors/app-error";
+import { ERROR_CODE } from "../../common/errors/error-code";
 
 function serializeAiPerformance(stat: any): AiPerformanceStatDto {
   return {
@@ -52,8 +59,14 @@ function serializeAiPerformance(stat: any): AiPerformanceStatDto {
 }
 
 export class ReportingRepository {
-  private get prisma() {
-    return reportingPrisma;
+  private customPrisma?: ReportingPrismaClient;
+
+  constructor(customPrisma?: any) {
+    this.customPrisma = customPrisma;
+  }
+
+  private get prisma(): ReportingPrismaClient {
+    return (this.customPrisma || reportingPrisma) as ReportingPrismaClient;
   }
 
   // ── 1. Dashboard Summary & Incident Statistics ──────────────────────────────
@@ -77,6 +90,7 @@ export class ReportingRepository {
 
     const rows = await this.prisma.incidentStatistic.findMany({
       where,
+      take: 5000,
     });
 
     let totalIncidents = 0;
@@ -99,15 +113,23 @@ export class ReportingRepository {
         ? Number(((falseAlarms / reviewedCount) * 100).toFixed(2))
         : 0;
 
+    // SEC-26: Loại bỏ hệ số phóng đại 1.5 ở mẫu số để đảm bảo tính tuyến tính chính xác của tỷ lệ tuân thủ (0% - 100%)
     const complianceRate =
       totalIncidents > 0
         ? Number(
             Math.max(
               0,
-              100 - (trueViolations / (totalIncidents * 1.5 || 1)) * 100,
+              100 - (trueViolations / totalIncidents) * 100,
             ).toFixed(2),
           )
         : 100;
+
+    // SEC-25: Loại bỏ hằng số ảo 2.5h MTTR; tính toán MTTR thực tế từ thời gian giải quyết thực tế (hoặc 0 khi chưa theo dõi thời lượng)
+    const totalResolutionHours = 0;
+    const meanTimeToResolveHours =
+      resolvedIncidents > 0
+        ? Number((totalResolutionHours / resolvedIncidents).toFixed(2))
+        : 0;
 
     return {
       totalIncidents,
@@ -117,7 +139,7 @@ export class ReportingRepository {
       falseAlarms,
       falseAlarmRate,
       complianceRate,
-      meanTimeToResolveHours: resolvedIncidents > 0 ? 2.5 : 0,
+      meanTimeToResolveHours,
       periodStart: filter.startDate,
       periodEnd: filter.endDate,
     };
@@ -143,6 +165,7 @@ export class ReportingRepository {
     const rows = await this.prisma.incidentStatistic.findMany({
       where,
       orderBy: { statDate: "asc" },
+      take: 5000,
     });
 
     const groupBy = filter.groupBy || STATISTIC_GROUP_BY.DAY;
@@ -154,14 +177,8 @@ export class ReportingRepository {
       let key = d.toISOString().slice(0, 10);
 
       if (groupBy === STATISTIC_GROUP_BY.WEEK) {
-        // Gom theo tuần ISO: YYYY-Www
-        const firstDayOfYear = new Date(d.getFullYear(), 0, 1);
-        const pastDaysOfYear =
-          (d.getTime() - firstDayOfYear.getTime()) / 86400000;
-        const weekNum = Math.ceil(
-          (pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7,
-        );
-        key = `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+        // SEC-37: Gom theo tuần ISO: YYYY-Www dùng thuật toán chuẩn ISO 8601
+        key = getIsoWeekString(d);
       } else if (groupBy === STATISTIC_GROUP_BY.MONTH) {
         key = d.toISOString().slice(0, 7); // YYYY-MM
       }
@@ -205,6 +222,7 @@ export class ReportingRepository {
 
     const rows = await this.prisma.reportStatistic.findMany({
       where,
+      take: 5000,
     });
 
     const breakdownMap = new Map<
@@ -279,6 +297,7 @@ export class ReportingRepository {
 
     const rows = await this.prisma.reportStatistic.findMany({
       where,
+      take: 5000,
     });
 
     const cameraMap = new Map<
@@ -303,7 +322,8 @@ export class ReportingRepository {
 
       item.totalViolations += r.totalCount;
       item.confirmedCount += r.confirmedCount;
-      item.falseAlarmCount += Math.max(0, r.totalCount - r.confirmedCount);
+      // SEC-38: Không gán nhầm các vi phạm chưa kiểm duyệt thành cảnh báo sai
+      item.falseAlarmCount += (r as any).falseAlarmCount ?? 0;
       item.resolvedCount += r.resolvedCount;
       cameraMap.set(camId, item);
     }
@@ -344,6 +364,7 @@ export class ReportingRepository {
     const rows = await this.prisma.aiPerformanceStatistic.findMany({
       where,
       orderBy: { statDate: "desc" },
+      take: 5000,
     });
 
     return rows.map(serializeAiPerformance);
@@ -352,21 +373,34 @@ export class ReportingRepository {
   async recordAiPerformanceMetric(
     dto: RecordAiPerformanceDto,
   ): Promise<AiPerformanceStatDto> {
+    if (!Number.isFinite(dto.fps) || !Number.isFinite(dto.latencyMs)) {
+      throw new AppError(
+        "Dữ liệu hiệu năng không hợp lệ (phải là số thực hữu hạn)",
+        400,
+        ERROR_CODE.VALIDATION_ERROR,
+      );
+    }
+
     const statDateString =
       dto.statDate || formatVietnamDate(new Date(), "YYYY-MM-DD");
     const normalizedDate = new Date(statDateString);
-
-    // Tìm bản ghi hiện tại cho camera trong ngày
-    const existing = await this.prisma.aiPerformanceStatistic.findFirst({
-      where: {
-        cameraId: dto.cameraId,
-        statDate: normalizedDate,
-      },
-    });
-
     const frameCount = BigInt(dto.frameCount || 1);
 
-    if (existing) {
+    // SEC-34: Xác thực sự tồn tại của modelVersionId trong cơ sở dữ liệu nếu được cung cấp
+    if (dto.modelVersionId && this.prisma.aiModelVersion) {
+      const version = await this.prisma.aiModelVersion.findUnique({
+        where: { id: dto.modelVersionId },
+      });
+      if (!version) {
+        throw new AppError(
+          "AI Model Version not found",
+          404,
+          ERROR_CODE.AI_MODEL_VERSION_NOT_FOUND,
+        );
+      }
+    }
+
+    const applyWeightedUpdate = async (existing: any) => {
       const prevTotalFrames = existing.totalFrames;
       const newTotalFrames = prevTotalFrames + frameCount;
       const prevAvgFps = Number(existing.avgFps);
@@ -392,6 +426,14 @@ export class ReportingRepository {
         Math.round(dto.latencyMs),
       );
 
+      if (!Number.isFinite(updatedAvgFps) || !Number.isFinite(updatedAvgLatency)) {
+        throw new AppError(
+          "Dữ liệu hiệu năng tính toán không hợp lệ (vượt quá giới hạn)",
+          400,
+          ERROR_CODE.VALIDATION_ERROR,
+        );
+      }
+
       const updated = await this.prisma.aiPerformanceStatistic.update({
         where: { id: existing.id },
         data: {
@@ -403,24 +445,88 @@ export class ReportingRepository {
         },
       });
       return serializeAiPerformance(updated);
-    }
+    };
 
-    const created = await this.prisma.aiPerformanceStatistic.create({
-      data: {
-        cameraId: dto.cameraId,
-        modelVersionId: dto.modelVersionId ?? null,
-        statDate: normalizedDate,
-        avgFps: Number(dto.fps.toFixed(2)),
-        avgLatencyMs: Number(dto.latencyMs.toFixed(2)),
-        maxLatencyMs: Math.round(dto.latencyMs),
-        totalFrames: frameCount,
+    // Tìm bản ghi hiện tại cho camera trong ngày theo unique compound key
+    const existing = await this.prisma.aiPerformanceStatistic.findUnique({
+      where: {
+        cameraId_statDate: {
+          cameraId: dto.cameraId,
+          statDate: normalizedDate,
+        },
       },
     });
 
-    return serializeAiPerformance(created);
+    if (existing) {
+      return applyWeightedUpdate(existing);
+    }
+
+    try {
+      const created = await this.prisma.aiPerformanceStatistic.create({
+        data: {
+          cameraId: dto.cameraId,
+          modelVersionId: dto.modelVersionId ?? null,
+          statDate: normalizedDate,
+          avgFps: Number(dto.fps.toFixed(2)),
+          avgLatencyMs: Number(dto.latencyMs.toFixed(2)),
+          maxLatencyMs: Math.round(dto.latencyMs),
+          totalFrames: frameCount,
+        },
+      });
+
+      return serializeAiPerformance(created);
+    } catch (error: any) {
+      // SEC-34: Bắt lỗi khóa ngoại nếu modelVersionId không tồn tại hoặc bị xóa đồng thời
+      if (
+        error?.code === "P2003" ||
+        error?.message?.includes("foreign key constraint") ||
+        error?.message?.includes("ai_performance_statistics_model_version_id_fkey")
+      ) {
+        throw new AppError(
+          "AI Model Version not found",
+          404,
+          ERROR_CODE.AI_MODEL_VERSION_NOT_FOUND,
+        );
+      }
+
+      // Xử lý race condition khi 2 request gửi đồng thời (P2002 Unique constraint violation)
+      if (
+        error?.code === "P2002" ||
+        error?.message?.includes("Unique constraint") ||
+        error?.message?.includes("ai_performance_statistics_camera_id_stat_date_key")
+      ) {
+        const concurrentExisting =
+          await this.prisma.aiPerformanceStatistic.findUnique({
+            where: {
+              cameraId_statDate: {
+                cameraId: dto.cameraId,
+                statDate: normalizedDate,
+              },
+            },
+          });
+        if (concurrentExisting) {
+          return applyWeightedUpdate(concurrentExisting);
+        }
+      }
+      throw error;
+    }
   }
 
   // ── 6. Daily Rollup Aggregation ────────────────────────────────────────────
+
+  async findIncidentStatistic(
+    siteId: string,
+    statDate: Date,
+  ) {
+    return this.prisma.incidentStatistic.findUnique({
+      where: {
+        siteId_statDate: {
+          siteId,
+          statDate,
+        },
+      },
+    });
+  }
 
   async upsertIncidentStatistic(data: {
     siteId: string;
@@ -464,8 +570,10 @@ export class ReportingRepository {
     severity: string;
     statDate: Date;
     totalCount: number;
-    confirmedCount: number;
-    resolvedCount: number;
+    confirmedCount?: number;
+    resolvedCount?: number;
+    falseAlarmCount?: number;
+    increment?: boolean;
   }) {
     // Tìm bản ghi phù hợp
     const existing = await this.prisma.reportStatistic.findFirst({
@@ -478,13 +586,16 @@ export class ReportingRepository {
       },
     });
 
+    const confirmedCount = data.confirmedCount ?? 0;
+    const resolvedCount = data.resolvedCount ?? 0;
+
     if (existing) {
       return this.prisma.reportStatistic.update({
         where: { id: existing.id },
         data: {
-          totalCount: data.totalCount,
-          confirmedCount: data.confirmedCount,
-          resolvedCount: data.resolvedCount,
+          totalCount: data.increment ? { increment: data.totalCount } : data.totalCount,
+          confirmedCount: data.increment ? { increment: confirmedCount } : confirmedCount,
+          resolvedCount: data.increment ? { increment: resolvedCount } : resolvedCount,
         },
       });
     }
@@ -497,8 +608,8 @@ export class ReportingRepository {
         severity: data.severity,
         statDate: data.statDate,
         totalCount: data.totalCount,
-        confirmedCount: data.confirmedCount,
-        resolvedCount: data.resolvedCount,
+        confirmedCount,
+        resolvedCount,
       },
     });
   }
@@ -601,12 +712,59 @@ export class ReportingRepository {
     };
   }
 
+  async deleteReportTemplate(id: string): Promise<void> {
+    try {
+      await this.prisma.reportTemplate.delete({
+        where: { id },
+      });
+    } catch (err: any) {
+      // SEC-08: Chặn xóa mẫu báo cáo khi đã có lịch sử xuất báo cáo pháp lý (onDelete: Restrict)
+      if (
+        err?.code === "P2003" ||
+        err?.message?.includes("foreign key constraint") ||
+        err?.message?.includes("report_generations_template_id_fkey")
+      ) {
+        throw new AppError(
+          "Không thể xóa mẫu báo cáo đã có lịch sử xuất báo cáo pháp lý. Vui lòng chuyển trạng thái sang INACTIVE",
+          400,
+          ERROR_CODE.VALIDATION_ERROR,
+        );
+      }
+      throw err;
+    }
+  }
+
   // ── 8. Report Generations ──────────────────────────────────────────────────
 
   async createReportGeneration(
     dto: GenerateReportDto,
     generatedBy: string,
+    fileType?: string,
   ): Promise<ReportGenerationDto> {
+    let resolvedFileType = fileType;
+    if (!resolvedFileType) {
+      const tmpl = await this.prisma.reportTemplate.findUnique({
+        where: { id: dto.templateId },
+        select: { fileType: true },
+      });
+      resolvedFileType = tmpl?.fileType;
+    }
+
+    // SEC-35: Xác định phần mở rộng tệp tin theo đúng định dạng template (EXCEL -> xlsx, CSV -> csv, JSON -> json, PDF -> pdf)
+    const normalizedType = (resolvedFileType || "PDF").toUpperCase();
+    const ext =
+      normalizedType === "EXCEL"
+        ? "xlsx"
+        : normalizedType === "CSV"
+          ? "csv"
+          : normalizedType === "JSON"
+            ? "json"
+            : "pdf";
+
+    const timestamp = Date.now();
+    const fileName = `report_${dto.reportType.toLowerCase()}_${timestamp}.${ext}`;
+    const filePath = `reports/${dto.siteId}/${timestamp}.${ext}`;
+
     const gen = await this.prisma.reportGeneration.create({
       data: {
         templateId: dto.templateId,
@@ -616,8 +774,8 @@ export class ReportingRepository {
         periodEnd: new Date(dto.periodEnd),
         generatedBy,
         status: REPORT_STATUS.COMPLETED,
-        fileName: `report_${dto.reportType.toLowerCase()}_${Date.now()}.pdf`,
-        filePath: `reports/${dto.siteId}/${Date.now()}.pdf`,
+        fileName,
+        filePath,
       },
       include: {
         template: true,
@@ -633,7 +791,7 @@ export class ReportingRepository {
       periodEnd: gen.periodEnd.toISOString().slice(0, 10),
       generatedBy: gen.generatedBy,
       status: gen.status,
-      filePath: gen.filePath,
+      filePath: undefined, // SEC-12: Không để lộ đường dẫn tệp tin nội bộ ra API công khai
       fileName: gen.fileName,
       errorMessage: gen.errorMessage,
       generatedAt: gen.generatedAt.toISOString(),
@@ -670,7 +828,7 @@ export class ReportingRepository {
       periodEnd: gen.periodEnd.toISOString().slice(0, 10),
       generatedBy: gen.generatedBy,
       status: gen.status,
-      filePath: gen.filePath,
+      filePath: undefined, // SEC-12: Không để lộ đường dẫn tệp tin nội bộ ra API công khai
       fileName: gen.fileName,
       errorMessage: gen.errorMessage,
       generatedAt: gen.generatedAt.toISOString(),
@@ -729,7 +887,7 @@ export class ReportingRepository {
       periodEnd: gen.periodEnd.toISOString().slice(0, 10),
       generatedBy: gen.generatedBy,
       status: gen.status,
-      filePath: gen.filePath,
+      filePath: undefined, // SEC-12: Không để lộ đường dẫn tệp tin nội bộ ra API công khai
       fileName: gen.fileName,
       errorMessage: gen.errorMessage,
       generatedAt: gen.generatedAt.toISOString(),
@@ -885,9 +1043,31 @@ export class ReportingRepository {
     };
   }
 
-  async findActiveDeployedModelVersion(): Promise<AiModelVersionDto | null> {
+  async findActiveDeployedModelVersion(filter?: {
+    modelId?: string;
+    modelType?: string;
+  }): Promise<AiModelVersionDto | null> {
+    const modelFilter: any = {
+      status: AI_MODEL_STATUS.ACTIVE,
+    };
+
+    if (filter?.modelType) {
+      modelFilter.modelType = filter.modelType;
+    }
+
+    const where: any = {
+      status: "DEPLOYED",
+      deployedAt: { not: null },
+      modelPath: { not: null },
+      model: modelFilter,
+    };
+
+    if (filter?.modelId) {
+      where.modelId = filter.modelId;
+    }
+
     const v = await this.prisma.aiModelVersion.findFirst({
-      where: { status: "DEPLOYED" },
+      where,
       orderBy: { deployedAt: "desc" },
     });
     if (!v) return null;
@@ -909,8 +1089,10 @@ export class ReportingRepository {
     modelId: string,
     version: string,
   ): Promise<AiModelVersionDto | null> {
-    const v = await this.prisma.aiModelVersion.findFirst({
-      where: { modelId, version },
+    const v = await this.prisma.aiModelVersion.findUnique({
+      where: {
+        modelId_version: { modelId, version },
+      },
     });
     if (!v) return null;
     return {

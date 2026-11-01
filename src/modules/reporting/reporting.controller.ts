@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { ReportingService } from "./reporting.service";
+import { ReportingService, AuditLogger } from "./reporting.service";
 import {
   DashboardFilterDto,
   TrendsFilterDto,
@@ -17,8 +17,8 @@ import {
 export class ReportingController {
   private readonly service: ReportingService;
 
-  constructor(service?: ReportingService) {
-    this.service = service || new ReportingService();
+  constructor(service?: ReportingService, auditLogger?: AuditLogger) {
+    this.service = service || new ReportingService(undefined, auditLogger);
   }
 
   // ── 1. Statistics & Dashboard Endpoints ─────────────────────────────────────
@@ -29,7 +29,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const summary = await this.service.getDashboardSummary(req.query);
+      const summary = await this.service.getDashboardSummary(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: summary,
@@ -45,7 +48,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const trends = await this.service.getViolationTrends(req.query);
+      const trends = await this.service.getViolationTrends(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: trends,
@@ -63,6 +69,7 @@ export class ReportingController {
     try {
       const distribution = await this.service.getViolationDistribution(
         req.query,
+        req.user,
       );
       return res.status(200).json({
         success: true,
@@ -79,7 +86,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const rankings = await this.service.getCameraRankings(req.query);
+      const rankings = await this.service.getCameraRankings(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: rankings,
@@ -132,6 +142,8 @@ export class ReportingController {
     try {
       const result = await this.service.aggregateDailyStats(req.body, {
         actorId: req.user?.id,
+        actorRole: req.user?.role,
+        actorSiteIds: req.user?.siteIds,
         ipAddress: req.ip,
         userAgent: req.get("user-agent"),
       });
@@ -200,6 +212,26 @@ export class ReportingController {
     }
   };
 
+  deleteReportTemplate = async (
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      await this.service.deleteReportTemplate(req.params.id, {
+        actorId: req.user?.id,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+      return res.status(200).json({
+        success: true,
+        message: "Report template deleted successfully",
+      });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
   generateReport = async (
     req: Request<unknown, unknown, GenerateReportDto>,
     res: Response,
@@ -227,7 +259,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const result = await this.service.listReportGenerations(req.query);
+      const result = await this.service.listReportGenerations(
+        req.query,
+        req.user,
+      );
       return res.status(200).json({
         success: true,
         data: result.data,
@@ -253,6 +288,28 @@ export class ReportingController {
         success: true,
         data: download,
       });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  getReportGenerationContent = async (
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const file = await this.service.getReportGenerationContent(
+        req.params.id,
+        req.user?.id,
+        req.user?.role,
+      );
+      res.setHeader("Content-Type", file.contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${file.fileName}"`,
+      );
+      return res.status(200).send(file.content);
     } catch (error) {
       return next(error);
     }
@@ -380,12 +437,14 @@ export class ReportingController {
   };
 
   getActiveModelVersion = async (
-    _req: Request,
+    req: Request,
     res: Response,
     next: NextFunction,
   ) => {
     try {
-      const data = await this.service.getActiveModelVersion();
+      const modelId = typeof req.query?.modelId === "string" ? req.query.modelId : undefined;
+      const modelType = typeof req.query?.modelType === "string" ? req.query.modelType : undefined;
+      const data = await this.service.getActiveModelVersion({ modelId, modelType });
       return res.status(200).json({
         success: true,
         data,

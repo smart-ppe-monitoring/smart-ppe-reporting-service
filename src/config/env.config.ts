@@ -1,4 +1,6 @@
 import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 
 const envSchema = z
@@ -267,18 +269,28 @@ const envSchema = z
   .refine(
     (env) => {
       if (env.NODE_ENV !== "production") return true;
+      // SEC-09: Satellite microservice không bao giờ yêu cầu JWT_PRIVATE_KEY
+      // Chỉ yêu cầu JWT_PUBLIC_KEY, keys/public.key.pem hoặc AUTH_JWKS_URL để xác thực offline RS256
       if (env.JWT_ALGORITHM === "RS256") {
-        return (
-          typeof env.JWT_PRIVATE_KEY === "string" &&
-          env.JWT_PRIVATE_KEY.trim().length > 0
-        );
+        const hasPublicKeyEnv =
+          typeof env.JWT_PUBLIC_KEY === "string" &&
+          env.JWT_PUBLIC_KEY.trim().length > 0;
+        const hasJwksUrl =
+          typeof env.AUTH_JWKS_URL === "string" &&
+          env.AUTH_JWKS_URL.trim().length > 0;
+        const candidatePaths = [
+          path.resolve(process.cwd(), "keys", "public.key.pem"),
+          path.resolve(process.cwd(), "keys", "public.pem"),
+        ];
+        const hasPublicKeyFile = candidatePaths.some((p) => fs.existsSync(p));
+        return hasPublicKeyEnv || hasJwksUrl || hasPublicKeyFile;
       }
       return true;
     },
     {
       message:
-        "JWT_PRIVATE_KEY bắt buộc phải được cấu hình khi JWT_ALGORITHM=RS256 trong môi trường production (định dạng PEM, base64 hoặc đường dẫn file)",
-      path: ["JWT_PRIVATE_KEY"],
+        "Satellite microservice yêu cầu JWT_PUBLIC_KEY, keys/public.key.pem hoặc AUTH_JWKS_URL khi JWT_ALGORITHM=RS256 trong môi trường production (không yêu cầu JWT_PRIVATE_KEY)",
+      path: ["JWT_PUBLIC_KEY"],
     },
   )
   .refine(
@@ -314,7 +326,9 @@ const _env = _parsed.data;
 
 /** Phân giải giá trị TRUST_PROXY sang kiểu mà Express chấp nhận */
 function parseTrustProxy(val: string): boolean | number | string | string[] {
-  if (val === "true") return true;
+  // SEC-18: Khi TRUST_PROXY='true', chỉ tin cậy 1 hop proxy trực tiếp (Traefik) thay vì true (tin cậy mọi hop)
+  // để chống tấn công Blind IP Spoofing qua header X-Forwarded-For giả mạo (CWE-345)
+  if (val === "true") return 1;
   if (val === "false") return false;
   if (/^\d+$/.test(val)) return parseInt(val, 10);
   if (val.includes(",")) return val.split(",").map((s) => s.trim());
@@ -469,6 +483,7 @@ export const envConfig = {
   encryption: {
     key: resolveEncryptionKey(),
   },
+  encryptionKey: resolveEncryptionKey(),
   redis: resolveRedisConfig(),
   webhook: {
     maxAttempts: _env.WEBHOOK_MAX_ATTEMPTS,

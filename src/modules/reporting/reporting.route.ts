@@ -16,6 +16,7 @@ import {
   reportHistoryQuerySchema,
   createAiModelSchema,
   createAiModelVersionSchema,
+  activeModelVersionQuerySchema,
   uuidParamSchema,
   modelVersionParamSchema,
   versionIdParamSchema,
@@ -104,6 +105,13 @@ reportRouter.post(
   controller.createReportTemplate,
 );
 
+reportRouter.delete(
+  "/templates/:id",
+  requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),
+  validate(uuidParamSchema, "params"),
+  controller.deleteReportTemplate,
+);
+
 reportRouter.post(
   "/generate",
   requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),
@@ -125,6 +133,13 @@ reportRouter.get(
   controller.getReportGenerationDownload,
 );
 
+reportRouter.get(
+  "/:id/content",
+  requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),
+  validate(uuidParamSchema, "params"),
+  controller.getReportGenerationContent,
+);
+
 // ── 3. AI Models & Governance Routes (/api/v1/ai-models) ─────────────────────
 
 aiModelRouter.use(authMiddleware);
@@ -132,6 +147,7 @@ aiModelRouter.use(authMiddleware);
 aiModelRouter.get(
   "/active-version",
   requirePermission(PERMISSIONS.PPE_MODEL_READ),
+  validate(activeModelVersionQuerySchema, "query"),
   controller.getActiveModelVersion,
 );
 

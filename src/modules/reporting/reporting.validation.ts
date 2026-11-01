@@ -10,6 +10,19 @@ import {
 const dateRegex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const semverRegex = /^v?\d+\.\d+\.\d+$/;
 const codeRegex = /^[A-Za-z0-9_.-]+$/;
+const MAX_DATE_RANGE_DAYS = 90;
+
+export function isDateRangeWithinDays(
+  startDate?: string,
+  endDate?: string,
+  maxDays = MAX_DATE_RANGE_DAYS,
+): boolean {
+  if (!startDate || !endDate) return true;
+  const start = new Date(startDate).getTime();
+  const end = new Date(endDate).getTime();
+  const diffDays = (end - start) / (1000 * 3600 * 24);
+  return diffDays <= maxDays;
+}
 
 // ── 1. Statistics & KPI Filter Schemas ────────────────────────────────────────
 
@@ -34,6 +47,13 @@ export const dashboardFilterSchema = z
     },
     {
       message: "endDate must be equal to or greater than startDate",
+      path: ["endDate"],
+    },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
       path: ["endDate"],
     },
   );
@@ -68,6 +88,13 @@ export const trendsFilterSchema = z
       message: "endDate must be equal to or greater than startDate",
       path: ["endDate"],
     },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
+      path: ["endDate"],
+    },
   );
 
 export const cameraStatsFilterSchema = z
@@ -92,6 +119,13 @@ export const cameraStatsFilterSchema = z
     },
     {
       message: "endDate must be equal to or greater than startDate",
+      path: ["endDate"],
+    },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
       path: ["endDate"],
     },
   );
@@ -119,6 +153,13 @@ export const aiPerformanceFilterSchema = z
       message: "endDate must be equal to or greater than startDate",
       path: ["endDate"],
     },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
+      path: ["endDate"],
+    },
   );
 
 export const recordAiPerformanceSchema = z.object({
@@ -140,6 +181,7 @@ export const recordAiPerformanceSchema = z.object({
     .number()
     .int()
     .positive("frameCount must be positive integer")
+    .max(1_000_000, "frameCount cannot exceed 1,000,000 per report")
     .default(1),
 });
 
@@ -241,11 +283,22 @@ export const createAiModelSchema = z.object({
   description: z.string().trim().max(1000).optional(),
 });
 
+export const modelPathRegex =
+  /^(s3:\/\/[a-zA-Z0-9_-]+\/|models\/)(?!.*\.\.)[a-zA-Z0-9._\/-]+\.(pt|onnx|engine|tflite|bin)$/i;
+
 export const createAiModelVersionSchema = z.object({
   version: z
     .string()
     .regex(semverRegex, "Version must follow SemVer (e.g. 1.0.0)"),
-  modelPath: z.string().trim().max(500).optional(),
+  modelPath: z
+    .string()
+    .trim()
+    .max(500)
+    .regex(
+      modelPathRegex,
+      "modelPath must be a trusted storage URI (e.g. s3://ppe-models/... or models/...) ending in .pt, .onnx, .engine, .tflite, or .bin",
+    )
+    .optional(),
   framework: z.string().trim().max(50).default("PyTorch"),
   inputSize: z
     .string()
@@ -253,6 +306,17 @@ export const createAiModelVersionSchema = z.object({
     .regex(/^\d+x\d+$/i, "Input size must be in WxH format (e.g. 640x640)")
     .default("640x640"),
   metrics: z.record(z.unknown()).optional(),
+});
+
+export const activeModelVersionQuerySchema = z.object({
+  modelId: z.string().uuid("Invalid modelId UUID format").optional(),
+  modelType: z
+    .enum([
+      AI_MODEL_TYPE.OBJECT_DETECTION,
+      AI_MODEL_TYPE.TRACKING,
+      AI_MODEL_TYPE.CLASSIFICATION,
+    ])
+    .optional(),
 });
 
 export const uuidParamSchema = z.object({

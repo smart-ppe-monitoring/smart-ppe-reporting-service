@@ -11,7 +11,7 @@ export function resolveSatellitePermissions(req: Request): Set<string> {
 
   let userPermissions = new Set<string>();
 
-  if (Array.isArray(req.user.permissions) && req.user.permissions.length > 0) {
+  if (Array.isArray(req.user.permissions)) {
     userPermissions = new Set(req.user.permissions);
   } else if (req.user.role === ROLES.ADMIN || req.user.role === "ADMIN") {
     userPermissions = new Set(Object.values(PERMISSIONS));
@@ -91,7 +91,7 @@ export function requirePermission(...permissions: string[]) {
 
       const userPermissions = resolveSatellitePermissions(req);
 
-      if (req.user.role === ROLES.ADMIN || req.user.role === "ADMIN") {
+      if (!req.apiKey && (req.user.role === ROLES.ADMIN || req.user.role === "ADMIN")) {
         return next();
       }
 
@@ -122,7 +122,7 @@ export function requireAnyPermission(...permissions: string[]) {
 
       const userPermissions = resolveSatellitePermissions(req);
 
-      if (req.user.role === ROLES.ADMIN || req.user.role === "ADMIN") {
+      if (!req.apiKey && (req.user.role === ROLES.ADMIN || req.user.role === "ADMIN")) {
         return next();
       }
 
