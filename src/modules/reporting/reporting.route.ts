@@ -16,6 +16,7 @@ import {
   reportHistoryQuerySchema,
   createAiModelSchema,
   createAiModelVersionSchema,
+  activeModelVersionQuerySchema,
   uuidParamSchema,
   modelVersionParamSchema,
   versionIdParamSchema,
@@ -132,6 +133,7 @@ aiModelRouter.use(authMiddleware);
 aiModelRouter.get(
   "/active-version",
   requirePermission(PERMISSIONS.PPE_MODEL_READ),
+  validate(activeModelVersionQuerySchema, "query"),
   controller.getActiveModelVersion,
 );
 

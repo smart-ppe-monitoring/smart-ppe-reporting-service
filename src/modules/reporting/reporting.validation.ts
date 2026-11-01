@@ -241,11 +241,22 @@ export const createAiModelSchema = z.object({
   description: z.string().trim().max(1000).optional(),
 });
 
+export const modelPathRegex =
+  /^(s3:\/\/[a-zA-Z0-9_-]+\/|models\/)(?!.*\.\.)[a-zA-Z0-9._\/-]+\.(pt|onnx|engine|tflite|bin)$/i;
+
 export const createAiModelVersionSchema = z.object({
   version: z
     .string()
     .regex(semverRegex, "Version must follow SemVer (e.g. 1.0.0)"),
-  modelPath: z.string().trim().max(500).optional(),
+  modelPath: z
+    .string()
+    .trim()
+    .max(500)
+    .regex(
+      modelPathRegex,
+      "modelPath must be a trusted storage URI (e.g. s3://ppe-models/... or models/...) ending in .pt, .onnx, .engine, .tflite, or .bin",
+    )
+    .optional(),
   framework: z.string().trim().max(50).default("PyTorch"),
   inputSize: z
     .string()
@@ -253,6 +264,17 @@ export const createAiModelVersionSchema = z.object({
     .regex(/^\d+x\d+$/i, "Input size must be in WxH format (e.g. 640x640)")
     .default("640x640"),
   metrics: z.record(z.unknown()).optional(),
+});
+
+export const activeModelVersionQuerySchema = z.object({
+  modelId: z.string().uuid("Invalid modelId UUID format").optional(),
+  modelType: z
+    .enum([
+      AI_MODEL_TYPE.OBJECT_DETECTION,
+      AI_MODEL_TYPE.TRACKING,
+      AI_MODEL_TYPE.CLASSIFICATION,
+    ])
+    .optional(),
 });
 
 export const uuidParamSchema = z.object({

@@ -885,9 +885,28 @@ export class ReportingRepository {
     };
   }
 
-  async findActiveDeployedModelVersion(): Promise<AiModelVersionDto | null> {
+  async findActiveDeployedModelVersion(filter?: {
+    modelId?: string;
+    modelType?: string;
+  }): Promise<AiModelVersionDto | null> {
+    const where: any = {
+      status: "DEPLOYED",
+      deployedAt: { not: null },
+      modelPath: { not: null },
+    };
+
+    if (filter?.modelId) {
+      where.modelId = filter.modelId;
+    }
+
+    if (filter?.modelType) {
+      where.model = {
+        modelType: filter.modelType,
+      };
+    }
+
     const v = await this.prisma.aiModelVersion.findFirst({
-      where: { status: "DEPLOYED" },
+      where,
       orderBy: { deployedAt: "desc" },
     });
     if (!v) return null;

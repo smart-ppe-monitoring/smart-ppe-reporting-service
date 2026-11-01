@@ -414,8 +414,11 @@ export class ReportingService {
     return v;
   }
 
-  async getActiveModelVersion(): Promise<AiModelVersionDto> {
-    const v = await this.repository.findActiveDeployedModelVersion();
+  async getActiveModelVersion(filter?: {
+    modelId?: string;
+    modelType?: string;
+  }): Promise<AiModelVersionDto> {
+    const v = await this.repository.findActiveDeployedModelVersion(filter);
     if (!v) {
       throw new AppError("Chưa có phiên bản mô hình AI nào được triển khai", 404, ERROR_CODE.NOT_FOUND);
     }

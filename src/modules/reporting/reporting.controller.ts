@@ -380,12 +380,14 @@ export class ReportingController {
   };
 
   getActiveModelVersion = async (
-    _req: Request,
+    req: Request,
     res: Response,
     next: NextFunction,
   ) => {
     try {
-      const data = await this.service.getActiveModelVersion();
+      const modelId = typeof req.query?.modelId === "string" ? req.query.modelId : undefined;
+      const modelType = typeof req.query?.modelType === "string" ? req.query.modelType : undefined;
+      const data = await this.service.getActiveModelVersion({ modelId, modelType });
       return res.status(200).json({
         success: true,
         data,
