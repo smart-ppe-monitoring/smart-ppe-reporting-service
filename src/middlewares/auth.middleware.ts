@@ -4,29 +4,22 @@ import { jwtConfig } from "../config/jwt.config";
 import { AppError } from "../common/errors/app-error";
 import { ERROR_CODE } from "../common/errors/error-code";
 import { JWT_PURPOSE, JWT_ALGORITHM } from "../common/constants/jwt.constant";
+import { isUuid } from "../common/helpers/uuid.helper";
 
 export function extractTokenFromRequest(req: Request): string | undefined {
-  let token = req.cookies?.accessToken;
-  if (!token) {
-    const authHeader = req.headers?.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.split(" ")[1];
-    }
+  // SEC-28: Ưu tiên header Authorization: Bearer tường minh trước cookie ambient
+  const authHeader = req.headers?.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
   }
 
-  const cleanPath = (
-    (req.baseUrl || "") + (req.path || req.originalUrl || "")
-  ).split("?")[0];
-  const isAllowedQueryTokenEndpoint =
-    cleanPath.endsWith("/stream") || cleanPath.endsWith("/download");
-
-  if (!token && isAllowedQueryTokenEndpoint) {
-    const queryToken = req.query?.ticket || req.query?.token;
-    if (typeof queryToken === "string") {
-      token = queryToken;
-    }
+  if (req.cookies?.accessToken) {
+    return req.cookies.accessToken;
   }
-  return token;
+
+  // SEC-31: Không cho phép trích xuất token qua query parameter trên các REST API của reporting service
+  // nhằm chống rò rỉ JWT qua server access logs, browser history và referer header (CWE-598)
+  return undefined;
 }
 
 export async function authMiddleware(
@@ -34,13 +27,8 @@ export async function authMiddleware(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const cleanPath = (
-    (req.baseUrl || "") + (req.path || req.originalUrl || "")
-  ).split("?")[0];
-  const isAllowedQueryTokenEndpoint =
-    cleanPath.endsWith("/stream") || cleanPath.endsWith("/download");
-
-  if (!isAllowedQueryTokenEndpoint && req.query?.token) {
+  // SEC-31: Chặn triệt để việc truyền token hoặc ticket xác thực qua URL query string trên API
+  if (req.query?.token || req.query?.ticket) {
     next(
       new AppError(
         "Không được phép truyền token xác thực qua query string trên API thông thường để tránh rò rỉ qua log và browser history",
@@ -99,13 +87,8 @@ export async function authMiddleware(
       return;
     }
 
-    const isStreamOrDownload =
-      cleanPath.endsWith("/stream") || cleanPath.endsWith("/download");
-    const isValidPurpose =
-      payload.purpose === JWT_PURPOSE.ACCESS ||
-      (isStreamOrDownload && payload.purpose === JWT_PURPOSE.SSE_STREAM_TICKET);
-
-    if (payload.purpose && !isValidPurpose) {
+    // SEC-02: Xác thực mục đích sử dụng (purpose) phải là ACCESS token
+    if (payload.purpose && payload.purpose !== JWT_PURPOSE.ACCESS) {
       next(
         new AppError(
           "Token không đúng mục đích sử dụng (yêu cầu Access Token)",
@@ -116,8 +99,21 @@ export async function authMiddleware(
       return;
     }
 
+    // SEC-20: Kiểm tra định dạng UUID hợp lệ cho user id để phòng ngừa PostgreSQL syntax error crash
+    const rawUserId = payload.id || payload.sub;
+    if (!rawUserId || typeof rawUserId !== "string" || !isUuid(rawUserId)) {
+      next(
+        new AppError(
+          "Token không hợp lệ: định danh người dùng phải là UUID chuẩn",
+          401,
+          ERROR_CODE.UNAUTHORIZED,
+        ),
+      );
+      return;
+    }
+
     req.user = {
-      id: payload.id || payload.sub,
+      id: rawUserId,
       email: payload.email,
       role: payload.role,
       roleId: payload.roleId,

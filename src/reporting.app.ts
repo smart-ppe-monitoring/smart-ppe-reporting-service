@@ -13,7 +13,10 @@ import {
   aiModelRouter,
 } from "./modules/reporting/reporting.route";
 import { rateLimitMiddleware } from "./middlewares/rate-limit.middleware";
-import { requestIdMiddleware } from "./middlewares/request-id.middleware";
+import {
+  requestIdMiddleware,
+  requireGatewayOrigin,
+} from "./middlewares/request-id.middleware";
 import { maintenanceGuard } from "./middlewares/maintenance.middleware";
 import { envConfig } from "./config/env.config";
 import { reportingPrisma } from "./database/reporting.client";
@@ -125,6 +128,10 @@ if (envConfig.nodeEnv !== "production") {
   reportingApp.get("/openapi.json", (_req, res) => res.status(200).json(buildOpenApiSpec()));
   reportingApp.get("/api/v1/reports/openapi.json", (_req, res) => res.status(200).json(buildOpenApiSpec()));
 }
+
+// 3.2 Gateway Origin Guard (SEC-19)
+// Bảo vệ cổng nội bộ 8894 — chỉ chấp nhận request từ API Gateway tin cậy khi có GATEWAY_INTERNAL_SECRET
+reportingApp.use(requireGatewayOrigin);
 
 // 4. Mount Reporting, Statistics & AI Model Routes
 // Hỗ trợ dual-mount cả prefix /api/v1/... và /... khi qua Gateway hoặc gọi trực tiếp
