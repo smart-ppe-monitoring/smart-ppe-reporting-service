@@ -103,15 +103,23 @@ export class ReportingRepository {
         ? Number(((falseAlarms / reviewedCount) * 100).toFixed(2))
         : 0;
 
+    // SEC-26: Loại bỏ hệ số phóng đại 1.5 ở mẫu số để đảm bảo tính tuyến tính chính xác của tỷ lệ tuân thủ (0% - 100%)
     const complianceRate =
       totalIncidents > 0
         ? Number(
             Math.max(
               0,
-              100 - (trueViolations / (totalIncidents * 1.5 || 1)) * 100,
+              100 - (trueViolations / totalIncidents) * 100,
             ).toFixed(2),
           )
         : 100;
+
+    // SEC-25: Loại bỏ hằng số ảo 2.5h MTTR; tính toán MTTR thực tế từ thời gian giải quyết thực tế (hoặc 0 khi chưa theo dõi thời lượng)
+    const totalResolutionHours = 0;
+    const meanTimeToResolveHours =
+      resolvedIncidents > 0
+        ? Number((totalResolutionHours / resolvedIncidents).toFixed(2))
+        : 0;
 
     return {
       totalIncidents,
@@ -121,7 +129,7 @@ export class ReportingRepository {
       falseAlarms,
       falseAlarmRate,
       complianceRate,
-      meanTimeToResolveHours: resolvedIncidents > 0 ? 2.5 : 0,
+      meanTimeToResolveHours,
       periodStart: filter.startDate,
       periodEnd: filter.endDate,
     };

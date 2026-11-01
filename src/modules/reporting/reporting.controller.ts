@@ -273,6 +273,28 @@ export class ReportingController {
     }
   };
 
+  getReportGenerationContent = async (
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const file = await this.service.getReportGenerationContent(
+        req.params.id,
+        req.user?.id,
+        req.user?.role,
+      );
+      res.setHeader("Content-Type", file.contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${file.fileName}"`,
+      );
+      return res.status(200).send(file.content);
+    } catch (error) {
+      return next(error);
+    }
+  };
+
   // ── 3. AI Models & Governance Endpoints ─────────────────────────────────────
 
   listAiModels = async (

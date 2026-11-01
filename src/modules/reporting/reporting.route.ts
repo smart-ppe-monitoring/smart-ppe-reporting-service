@@ -126,6 +126,13 @@ reportRouter.get(
   controller.getReportGenerationDownload,
 );
 
+reportRouter.get(
+  "/:id/content",
+  requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),
+  validate(uuidParamSchema, "params"),
+  controller.getReportGenerationContent,
+);
+
 // ── 3. AI Models & Governance Routes (/api/v1/ai-models) ─────────────────────
 
 aiModelRouter.use(authMiddleware);
