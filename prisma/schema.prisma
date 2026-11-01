@@ -93,7 +93,7 @@ model AiPerformanceStatistic {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  @@index([cameraId, statDate])
+  @@unique([cameraId, statDate])
   @@map("ai_performance_statistics")
 }
 
@@ -126,6 +126,7 @@ model AiModelVersion {
 
   model AiModel @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
+  @@unique([modelId, version])
   @@index([modelId])
   @@map("ai_model_versions")
 }

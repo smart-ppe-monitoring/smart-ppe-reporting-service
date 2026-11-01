@@ -350,19 +350,34 @@ export class ReportingService {
       );
     }
 
-    const version = await this.repository.createAiModelVersion(modelId, dto);
+    try {
+      const version = await this.repository.createAiModelVersion(modelId, dto);
 
-    await this.logAudit({
-      actorId: context?.actorId,
-      action: AUDIT_ACTION.CREATE_AI_MODEL_VERSION,
-      targetType: AUDIT_TARGET_TYPE.PPE_AI_MODEL,
-      targetId: version.id,
-      details: { modelId, version: version.version },
-      ipAddress: context?.ipAddress,
-      userAgent: context?.userAgent,
-    });
+      await this.logAudit({
+        actorId: context?.actorId,
+        action: AUDIT_ACTION.CREATE_AI_MODEL_VERSION,
+        targetType: AUDIT_TARGET_TYPE.PPE_AI_MODEL,
+        targetId: version.id,
+        details: { modelId, version: version.version },
+        ipAddress: context?.ipAddress,
+        userAgent: context?.userAgent,
+      });
 
-    return version;
+      return version;
+    } catch (error: any) {
+      if (
+        error?.code === "P2002" ||
+        error?.message?.includes("Unique constraint") ||
+        error?.message?.includes("ai_model_versions_model_id_version_key")
+      ) {
+        throw new AppError(
+          `AI Model version '${dto.version}' already exists for this model`,
+          409,
+          ERROR_CODE.DUPLICATE_ENTRY,
+        );
+      }
+      throw error;
+    }
   }
 
   async deployAiModelVersion(

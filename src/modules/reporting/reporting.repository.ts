@@ -355,18 +355,9 @@ export class ReportingRepository {
     const statDateString =
       dto.statDate || formatVietnamDate(new Date(), "YYYY-MM-DD");
     const normalizedDate = new Date(statDateString);
-
-    // Tìm bản ghi hiện tại cho camera trong ngày
-    const existing = await this.prisma.aiPerformanceStatistic.findFirst({
-      where: {
-        cameraId: dto.cameraId,
-        statDate: normalizedDate,
-      },
-    });
-
     const frameCount = BigInt(dto.frameCount || 1);
 
-    if (existing) {
+    const applyWeightedUpdate = async (existing: any) => {
       const prevTotalFrames = existing.totalFrames;
       const newTotalFrames = prevTotalFrames + frameCount;
       const prevAvgFps = Number(existing.avgFps);
@@ -403,21 +394,58 @@ export class ReportingRepository {
         },
       });
       return serializeAiPerformance(updated);
-    }
+    };
 
-    const created = await this.prisma.aiPerformanceStatistic.create({
-      data: {
-        cameraId: dto.cameraId,
-        modelVersionId: dto.modelVersionId ?? null,
-        statDate: normalizedDate,
-        avgFps: Number(dto.fps.toFixed(2)),
-        avgLatencyMs: Number(dto.latencyMs.toFixed(2)),
-        maxLatencyMs: Math.round(dto.latencyMs),
-        totalFrames: frameCount,
+    // Tìm bản ghi hiện tại cho camera trong ngày theo unique compound key
+    const existing = await this.prisma.aiPerformanceStatistic.findUnique({
+      where: {
+        cameraId_statDate: {
+          cameraId: dto.cameraId,
+          statDate: normalizedDate,
+        },
       },
     });
 
-    return serializeAiPerformance(created);
+    if (existing) {
+      return applyWeightedUpdate(existing);
+    }
+
+    try {
+      const created = await this.prisma.aiPerformanceStatistic.create({
+        data: {
+          cameraId: dto.cameraId,
+          modelVersionId: dto.modelVersionId ?? null,
+          statDate: normalizedDate,
+          avgFps: Number(dto.fps.toFixed(2)),
+          avgLatencyMs: Number(dto.latencyMs.toFixed(2)),
+          maxLatencyMs: Math.round(dto.latencyMs),
+          totalFrames: frameCount,
+        },
+      });
+
+      return serializeAiPerformance(created);
+    } catch (error: any) {
+      // Xử lý race condition khi 2 request gửi đồng thời (P2002 Unique constraint violation)
+      if (
+        error?.code === "P2002" ||
+        error?.message?.includes("Unique constraint") ||
+        error?.message?.includes("ai_performance_statistics_camera_id_stat_date_key")
+      ) {
+        const concurrentExisting =
+          await this.prisma.aiPerformanceStatistic.findUnique({
+            where: {
+              cameraId_statDate: {
+                cameraId: dto.cameraId,
+                statDate: normalizedDate,
+              },
+            },
+          });
+        if (concurrentExisting) {
+          return applyWeightedUpdate(concurrentExisting);
+        }
+      }
+      throw error;
+    }
   }
 
   // ── 6. Daily Rollup Aggregation ────────────────────────────────────────────
@@ -928,8 +956,10 @@ export class ReportingRepository {
     modelId: string,
     version: string,
   ): Promise<AiModelVersionDto | null> {
-    const v = await this.prisma.aiModelVersion.findFirst({
-      where: { modelId, version },
+    const v = await this.prisma.aiModelVersion.findUnique({
+      where: {
+        modelId_version: { modelId, version },
+      },
     });
     if (!v) return null;
     return {
