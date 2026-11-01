@@ -680,7 +680,32 @@ export class ReportingRepository {
   async createReportGeneration(
     dto: GenerateReportDto,
     generatedBy: string,
+    fileType?: string,
   ): Promise<ReportGenerationDto> {
+    let resolvedFileType = fileType;
+    if (!resolvedFileType) {
+      const tmpl = await this.prisma.reportTemplate.findUnique({
+        where: { id: dto.templateId },
+        select: { fileType: true },
+      });
+      resolvedFileType = tmpl?.fileType;
+    }
+
+    // SEC-35: Xác định phần mở rộng tệp tin theo đúng định dạng template (EXCEL -> xlsx, CSV -> csv, JSON -> json, PDF -> pdf)
+    const normalizedType = (resolvedFileType || "PDF").toUpperCase();
+    const ext =
+      normalizedType === "EXCEL"
+        ? "xlsx"
+        : normalizedType === "CSV"
+          ? "csv"
+          : normalizedType === "JSON"
+            ? "json"
+            : "pdf";
+
+    const timestamp = Date.now();
+    const fileName = `report_${dto.reportType.toLowerCase()}_${timestamp}.${ext}`;
+    const filePath = `reports/${dto.siteId}/${timestamp}.${ext}`;
+
     const gen = await this.prisma.reportGeneration.create({
       data: {
         templateId: dto.templateId,
@@ -690,8 +715,8 @@ export class ReportingRepository {
         periodEnd: new Date(dto.periodEnd),
         generatedBy,
         status: REPORT_STATUS.COMPLETED,
-        fileName: `report_${dto.reportType.toLowerCase()}_${Date.now()}.pdf`,
-        filePath: `reports/${dto.siteId}/${Date.now()}.pdf`,
+        fileName,
+        filePath,
       },
       include: {
         template: true,

@@ -11,10 +11,15 @@ export function renderTemplateString(
 ): string {
   if (!template) return "";
 
+  const safeVars = variables && typeof variables === "object" ? variables : {};
   const shouldEscape = options.escapeHtml ?? true;
 
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => {
-    const value = variables[key];
+    // SEC-33: Ngăn chặn rò rỉ phương thức/thuộc tính kế thừa từ Object.prototype (e.g. toString, valueOf, constructor)
+    if (!Object.prototype.hasOwnProperty.call(safeVars, key)) {
+      return "";
+    }
+    const value = safeVars[key];
     if (value === undefined || value === null) {
       return "";
     }
