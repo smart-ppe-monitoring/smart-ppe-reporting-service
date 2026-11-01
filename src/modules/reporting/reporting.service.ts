@@ -46,6 +46,36 @@ export interface AuditLogger {
   }): Promise<any>;
 }
 
+/**
+ * SEC-32: Default structured audit logger for administrative governance events.
+ * Logs structured JSON events to console/stdout when a specialized central logger (Kafka/HTTP) is not injected.
+ */
+export class DefaultReportingAuditLogger implements AuditLogger {
+  async createAuditLog(data: {
+    actorId?: string;
+    action: string;
+    targetType: string;
+    targetId: string;
+    details?: any;
+    ipAddress?: string;
+    userAgent?: string;
+  }): Promise<any> {
+    const logEntry = {
+      level: "audit",
+      timestamp: new Date().toISOString(),
+      action: data.action,
+      targetType: data.targetType,
+      targetId: data.targetId,
+      actorId: data.actorId || "SYSTEM",
+      ipAddress: data.ipAddress,
+      userAgent: data.userAgent,
+      details: data.details,
+    };
+    console.info(`[AUDIT] ${JSON.stringify(logEntry)}`);
+    return logEntry;
+  }
+}
+
 export class ReportingService {
   private readonly repository: ReportingRepository;
   private readonly auditLogger?: AuditLogger;
@@ -55,7 +85,7 @@ export class ReportingService {
     auditLogger?: AuditLogger,
   ) {
     this.repository = repository || new ReportingRepository();
-    this.auditLogger = auditLogger;
+    this.auditLogger = auditLogger || new DefaultReportingAuditLogger();
   }
 
   private async logAudit(data: {
@@ -67,10 +97,16 @@ export class ReportingService {
     ipAddress?: string;
     userAgent?: string;
   }) {
-    if (!this.auditLogger) return;
+    const actorId = data.actorId || "SYSTEM";
+    if (!this.auditLogger) {
+      console.warn(
+        `[AUDIT-FALLBACK] Action: ${data.action}, Target: ${data.targetType}:${data.targetId}, Actor: ${actorId}`,
+      );
+      return;
+    }
     try {
       await this.auditLogger.createAuditLog({
-        actorId: data.actorId,
+        actorId,
         action: data.action,
         targetType: data.targetType,
         targetId: data.targetId,
@@ -81,6 +117,9 @@ export class ReportingService {
     } catch (err: any) {
       console.warn(
         `[ReportingService] Failed to record audit log: ${err?.message}`,
+      );
+      console.warn(
+        `[AUDIT-FALLBACK] Action: ${data.action}, Target: ${data.targetType}:${data.targetId}, Actor: ${actorId}`,
       );
     }
   }

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { ReportingService } from "./reporting.service";
+import { ReportingService, AuditLogger } from "./reporting.service";
 import {
   DashboardFilterDto,
   TrendsFilterDto,
@@ -17,8 +17,8 @@ import {
 export class ReportingController {
   private readonly service: ReportingService;
 
-  constructor(service?: ReportingService) {
-    this.service = service || new ReportingService();
+  constructor(service?: ReportingService, auditLogger?: AuditLogger) {
+    this.service = service || new ReportingService(undefined, auditLogger);
   }
 
   // ── 1. Statistics & Dashboard Endpoints ─────────────────────────────────────

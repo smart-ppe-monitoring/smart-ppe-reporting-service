@@ -81,13 +81,33 @@ export async function handleReportingShutdown(signal: string): Promise<void> {
 
     clearTimeout(forceExitTimer);
     console.log("[Reporting Service] Graceful shutdown completed.");
-    process.exit(0);
+    if (process.env.NODE_ENV !== "test") {
+      process.exit(
+        signal === "uncaughtException" || signal === "unhandledRejection"
+          ? 1
+          : 0,
+      );
+    }
   } catch (error) {
     console.error("[Reporting Service] Error during graceful shutdown:", error);
     clearTimeout(forceExitTimer);
-    process.exit(1);
+    if (process.env.NODE_ENV !== "test") {
+      process.exit(1);
+    }
   }
 }
 
 process.on("SIGTERM", () => void handleReportingShutdown("SIGTERM"));
 process.on("SIGINT", () => void handleReportingShutdown("SIGINT"));
+
+// SEC-29: Đăng ký listeners cho unhandledRejection và uncaughtException để ngăn chặn crash đột ngột
+// và đảm bảo ngắt kết nối database, đóng server socket an toàn trước khi dừng tiến trình
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[Reporting Service] Unhandled Promise Rejection:", reason);
+  void handleReportingShutdown("unhandledRejection");
+});
+
+process.on("uncaughtException", (error: Error) => {
+  console.error("[Reporting Service] Uncaught Exception:", error);
+  void handleReportingShutdown("uncaughtException");
+});
