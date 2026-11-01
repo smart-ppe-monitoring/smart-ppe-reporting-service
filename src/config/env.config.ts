@@ -1,4 +1,6 @@
 import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 
 const envSchema = z
@@ -267,18 +269,28 @@ const envSchema = z
   .refine(
     (env) => {
       if (env.NODE_ENV !== "production") return true;
+      // SEC-09: Satellite microservice không bao giờ yêu cầu JWT_PRIVATE_KEY
+      // Chỉ yêu cầu JWT_PUBLIC_KEY, keys/public.key.pem hoặc AUTH_JWKS_URL để xác thực offline RS256
       if (env.JWT_ALGORITHM === "RS256") {
-        return (
-          typeof env.JWT_PRIVATE_KEY === "string" &&
-          env.JWT_PRIVATE_KEY.trim().length > 0
-        );
+        const hasPublicKeyEnv =
+          typeof env.JWT_PUBLIC_KEY === "string" &&
+          env.JWT_PUBLIC_KEY.trim().length > 0;
+        const hasJwksUrl =
+          typeof env.AUTH_JWKS_URL === "string" &&
+          env.AUTH_JWKS_URL.trim().length > 0;
+        const candidatePaths = [
+          path.resolve(process.cwd(), "keys", "public.key.pem"),
+          path.resolve(process.cwd(), "keys", "public.pem"),
+        ];
+        const hasPublicKeyFile = candidatePaths.some((p) => fs.existsSync(p));
+        return hasPublicKeyEnv || hasJwksUrl || hasPublicKeyFile;
       }
       return true;
     },
     {
       message:
-        "JWT_PRIVATE_KEY bắt buộc phải được cấu hình khi JWT_ALGORITHM=RS256 trong môi trường production (định dạng PEM, base64 hoặc đường dẫn file)",
-      path: ["JWT_PRIVATE_KEY"],
+        "Satellite microservice yêu cầu JWT_PUBLIC_KEY, keys/public.key.pem hoặc AUTH_JWKS_URL khi JWT_ALGORITHM=RS256 trong môi trường production (không yêu cầu JWT_PRIVATE_KEY)",
+      path: ["JWT_PUBLIC_KEY"],
     },
   )
   .refine(

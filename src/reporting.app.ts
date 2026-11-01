@@ -93,14 +93,48 @@ reportingApp.use(express.urlencoded({ extended: true, limit: "2mb" }));
 reportingApp.use(cookieParser());
 
 // 3. Health check endpoints cho Traefik Gateway & Monitoring
-const healthHandler = async (_req: express.Request, res: express.Response) => {
-  let isHealthy = false;
-  try {
-    await reportingPrisma.$queryRaw`SELECT 1`;
-    isHealthy = true;
-  } catch {
-    isHealthy = false;
+// SEC-10: Caching trạng thái sức khỏe CSDL với TTL 5s để chống DoS connection pool starvation
+let lastHealthCheckTime = 0;
+let lastHealthStatus = true;
+let customHealthChecker: (() => Promise<boolean>) | null = null;
+const DB_HEALTH_CACHE_TTL_MS = 5000;
+
+export function setCustomHealthChecker(
+  checker: (() => Promise<boolean>) | null,
+): void {
+  customHealthChecker = checker;
+}
+
+export function resetDatabaseHealthCache(): void {
+  lastHealthCheckTime = 0;
+  lastHealthStatus = true;
+  customHealthChecker = null;
+}
+
+export const checkDatabaseHealth = async (): Promise<boolean> => {
+  const now = Date.now();
+  if (now - lastHealthCheckTime > DB_HEALTH_CACHE_TTL_MS) {
+    if (customHealthChecker) {
+      try {
+        lastHealthStatus = await customHealthChecker();
+      } catch {
+        lastHealthStatus = false;
+      }
+    } else {
+      try {
+        await reportingPrisma.$queryRaw`SELECT 1`;
+        lastHealthStatus = true;
+      } catch {
+        lastHealthStatus = false;
+      }
+    }
+    lastHealthCheckTime = now;
   }
+  return lastHealthStatus;
+};
+
+export const healthHandler = async (_req: express.Request, res: express.Response) => {
+  const isHealthy = await checkDatabaseHealth();
   const dbStatus = isHealthy ? "up" : "down";
 
   res.status(isHealthy ? 200 : 503).json({
