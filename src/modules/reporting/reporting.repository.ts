@@ -32,6 +32,7 @@ import {
   AiModelDto,
   AiModelVersionDto,
   PaginatedResultDto,
+  AggregatedReportDataDto,
 } from "./reporting.dto";
 import {
   REPORT_STATUS,
@@ -1176,6 +1177,77 @@ export class ReportingRepository {
         createdAt: updated.createdAt.toISOString(),
       };
     }, DEFAULT_REPORTING_TRANSACTION_OPTIONS);
+  }
+
+  async getAggregatedReportData(report: {
+    id: string;
+    siteId: string;
+    reportType: string;
+    periodStart: Date | string;
+    periodEnd: Date | string;
+    generatedBy: string;
+    generatedAt: Date | string;
+    template?: { code?: string; name?: string; fileType?: string } | null;
+  }): Promise<AggregatedReportDataDto> {
+    const startDate =
+      report.periodStart instanceof Date
+        ? report.periodStart.toISOString().slice(0, 10)
+        : String(report.periodStart).slice(0, 10);
+    const endDate =
+      report.periodEnd instanceof Date
+        ? report.periodEnd.toISOString().slice(0, 10)
+        : String(report.periodEnd).slice(0, 10);
+
+    const filter = {
+      siteId: report.siteId,
+      startDate,
+      endDate,
+    };
+
+    const [summary, violationsBreakdown, cameraRankings, trends, rawAiPerformance] =
+      await Promise.all([
+        this.getIncidentSummary(filter),
+        this.getViolationBreakdown(filter),
+        this.getCameraRankings({ ...filter, limit: 10 }),
+        this.getIncidentTrends({
+          ...filter,
+          groupBy:
+            report.reportType === "MONTHLY"
+              ? STATISTIC_GROUP_BY.WEEK
+              : STATISTIC_GROUP_BY.DAY,
+        }),
+        this.getAiPerformanceStats({ startDate, endDate }).catch(() => []),
+      ]);
+
+    // SEC: Đảm bảo cách ly đa công trường (multi-tenant isolation) cho số liệu hiệu năng AI.
+    // Khi báo cáo được tạo theo phạm vi công trường (siteId), số liệu AI Telemetry
+    // chỉ được phép hiển thị các camera thực tế thuộc công trường đó, triệt tiêu nguy cơ rò rỉ chéo.
+    const siteCameraIds = new Set(
+      cameraRankings.map((c) => c.cameraId).filter(Boolean) as string[],
+    );
+    const aiPerformance = filter.siteId
+      ? rawAiPerformance.filter((stat) => siteCameraIds.has(stat.cameraId))
+      : rawAiPerformance;
+
+    return {
+      reportId: report.id,
+      reportType: report.reportType,
+      templateCode: report.template?.code,
+      templateName: report.template?.name,
+      siteId: report.siteId,
+      periodStart: startDate,
+      periodEnd: endDate,
+      generatedBy: report.generatedBy,
+      generatedAt:
+        report.generatedAt instanceof Date
+          ? report.generatedAt.toISOString()
+          : String(report.generatedAt),
+      summary,
+      violationsBreakdown,
+      cameraRankings,
+      trends,
+      aiPerformance,
+    };
   }
 
   async checkDatabaseHealth(): Promise<boolean> {

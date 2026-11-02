@@ -10,7 +10,10 @@ try {
 
 import reportingApp from "./reporting.app";
 import { envConfig } from "./config/env.config";
-import { reportingPrisma } from "./database/reporting.client";
+import {
+  reportingPrisma,
+  ensureDefaultReportTemplates,
+} from "./database/reporting.client";
 
 const PORT = envConfig.reporting.port || 8894;
 
@@ -25,13 +28,16 @@ const PORT = envConfig.reporting.port || 8894;
  * 5. Tương tác trực tiếp với cơ sở dữ liệu ppe_reporting_db
  * 6. Hoạt động sau Traefik reverse proxy hoặc Standalone
  */
-export const server = reportingApp.listen(PORT, () => {
+export const server = reportingApp.listen(PORT, async () => {
   console.log(
     `[Reporting Service] Running on http://localhost:${PORT} in ${envConfig.nodeEnv} mode`,
   );
   console.log(
     `[Reporting Service] ✅ Listening for reports, statistics and AI model governance on port ${PORT}`,
   );
+  await ensureDefaultReportTemplates().catch((err) => {
+    console.warn("[Reporting Service] Auto-seed templates skipped:", err?.message);
+  });
 });
 
 let isShuttingDown = false;

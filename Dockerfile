@@ -25,6 +25,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/keys ./keys
+COPY --from=builder /app/src/assets ./dist/assets
 COPY package.json ./
 USER node
 

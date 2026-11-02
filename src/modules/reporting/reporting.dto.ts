@@ -221,3 +221,20 @@ export interface ActiveModelVersionQueryDto {
   modelId?: string;
   modelType?: string;
 }
+
+export interface AggregatedReportDataDto {
+  reportId: string;
+  reportType: string;
+  templateCode?: string;
+  templateName?: string;
+  siteId: string;
+  periodStart: string;
+  periodEnd: string;
+  generatedBy: string;
+  generatedAt: string;
+  summary: StatisticsSummaryDto;
+  violationsBreakdown: ViolationTypeStatDto[];
+  cameraRankings: CameraStatDto[];
+  trends: TrendItemDto[];
+  aiPerformance?: AiPerformanceStatDto[];
+}
