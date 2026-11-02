@@ -13,6 +13,8 @@ import {
   createAiModelVersionSchema,
   uuidParamSchema,
   modelVersionParamSchema,
+  activeModelVersionQuerySchema,
+  versionIdParamSchema,
 } from "./reporting.validation";
 import { z } from "zod";
 
@@ -273,6 +275,36 @@ export function registerReportingOpenApi(): void {
   });
 
   openapiRegistry.registerPath({
+    method: "get",
+    path: "/reports/templates/{id}",
+    tags: ["Reports"],
+    summary: "Chi tiết mẫu báo cáo định kỳ",
+    security: [{ BearerAuth: [] }],
+    request: { params: uuidParamSchema },
+    responses: {
+      200: {
+        description: "Lấy chi tiết mẫu báo cáo thành công",
+      },
+      404: { description: "Không tìm thấy mẫu báo cáo" },
+    },
+  });
+
+  openapiRegistry.registerPath({
+    method: "delete",
+    path: "/reports/templates/{id}",
+    tags: ["Reports"],
+    summary: "Xóa mẫu báo cáo định kỳ",
+    security: [{ BearerAuth: [] }],
+    request: { params: uuidParamSchema },
+    responses: {
+      200: {
+        description: "Xóa mẫu báo cáo thành công",
+      },
+      404: { description: "Không tìm thấy mẫu báo cáo" },
+    },
+  });
+
+  openapiRegistry.registerPath({
     method: "post",
     path: "/reports/generate",
     tags: ["Reports"],
@@ -346,6 +378,51 @@ export function registerReportingOpenApi(): void {
       200: {
         description: "Lấy danh sách mô hình AI thành công",
       },
+    },
+  });
+
+  openapiRegistry.registerPath({
+    method: "get",
+    path: "/ai-models/active-version",
+    tags: ["AI Models"],
+    summary: "Lấy thông tin phiên bản mô hình AI đang hoạt động (ACTIVE/DEPLOYED)",
+    security: [{ BearerAuth: [] }],
+    request: { query: activeModelVersionQuerySchema },
+    responses: {
+      200: {
+        description: "Lấy phiên bản mô hình AI active thành công",
+      },
+      404: { description: "Không tìm thấy phiên bản mô hình AI đang active" },
+    },
+  });
+
+  openapiRegistry.registerPath({
+    method: "get",
+    path: "/ai-models/versions/{versionId}",
+    tags: ["AI Models"],
+    summary: "Chi tiết phiên bản mô hình AI theo versionId",
+    security: [{ BearerAuth: [] }],
+    request: { params: versionIdParamSchema },
+    responses: {
+      200: {
+        description: "Lấy chi tiết phiên bản mô hình AI thành công",
+      },
+      404: { description: "Không tìm thấy phiên bản mô hình" },
+    },
+  });
+
+  openapiRegistry.registerPath({
+    method: "get",
+    path: "/ai-models/{id}",
+    tags: ["AI Models"],
+    summary: "Chi tiết mô hình AI theo ID",
+    security: [{ BearerAuth: [] }],
+    request: { params: uuidParamSchema },
+    responses: {
+      200: {
+        description: "Lấy thông tin mô hình AI thành công",
+      },
+      404: { description: "Không tìm thấy mô hình AI" },
     },
   });
 
