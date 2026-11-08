@@ -39,6 +39,31 @@ export interface AiPerformanceFilterDto {
 
 // ── Dashboard Summary & Analytics Results DTOs ───────────────────────────────
 
+export interface CameraStatusSummaryDto {
+  total: number;
+  online: number;
+  offline: number;
+}
+
+export interface ActiveModelSummaryDto {
+  name: string;
+  version: string;
+  latencyMs: number;
+  fps: number;
+}
+
+export interface DashboardKpiDto {
+  totalIncidents: number;
+  pendingReview: number;
+  complianceRate: number;
+  cameraStatus: CameraStatusSummaryDto;
+  activeModel: ActiveModelSummaryDto;
+}
+
+export interface DashboardKpiFilterDto {
+  siteId?: string;
+}
+
 export interface StatisticsSummaryDto {
   totalIncidents: number;
   openIncidents: number;

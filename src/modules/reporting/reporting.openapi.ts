@@ -1,6 +1,7 @@
 import { openapiRegistry } from "../../config/openapi/openapi.registry";
 import {
   dashboardFilterSchema,
+  dashboardKpiFilterSchema,
   trendsFilterSchema,
   cameraStatsFilterSchema,
   aiPerformanceFilterSchema,
@@ -37,6 +38,43 @@ export function registerReportingOpenApi(): void {
   );
 
   // ── Statistics & Dashboard Endpoints ───────────────────────────────────────
+
+  openapiRegistry.registerPath({
+    method: "get",
+    path: "/statistics/dashboard-kpi",
+    tags: ["Reporting & Statistics"],
+    summary: "Lấy số liệu KPI tổng hợp cho Dashboard (BFF endpoint)",
+    security: [{ BearerAuth: [] }],
+    request: { query: dashboardKpiFilterSchema },
+    responses: {
+      200: {
+        description: "Lấy số liệu Dashboard KPI thành công",
+        content: {
+          "application/json": {
+            schema: z.object({
+              success: z.boolean().openapi({ example: true }),
+              data: z.object({
+                totalIncidents: z.number().openapi({ example: 12 }),
+                pendingReview: z.number().openapi({ example: 6 }),
+                complianceRate: z.number().openapi({ example: 92.5 }),
+                cameraStatus: z.object({
+                  total: z.number().openapi({ example: 6 }),
+                  online: z.number().openapi({ example: 0 }),
+                  offline: z.number().openapi({ example: 6 }),
+                }),
+                activeModel: z.object({
+                  name: z.string().openapi({ example: "YOLO11m-PPE" }),
+                  version: z.string().openapi({ example: "1.0.0" }),
+                  latencyMs: z.number().openapi({ example: 18 }),
+                  fps: z.number().openapi({ example: 28 }),
+                }),
+              }),
+            }),
+          },
+        },
+      },
+    },
+  });
 
   openapiRegistry.registerPath({
     method: "get",

@@ -33,7 +33,10 @@ import {
   AiModelVersionDto,
   PaginatedResultDto,
   AggregatedReportDataDto,
+  ActiveModelSummaryDto,
 } from "./reporting.dto";
+import { envConfig } from "../../config/env.config";
+import { fetchInternalService } from "../../common/helpers/http-client.helper";
 import {
   REPORT_STATUS,
   AI_MODEL_STATUS,
@@ -72,8 +75,157 @@ export class ReportingRepository {
 
   // ── 1. Dashboard Summary & Incident Statistics ──────────────────────────────
 
+  /**
+   * Truy vấn danh sách incident thời gian thực từ ppe_incident_db thông qua HTTP endpoint
+   * dùng làm Real-time Fallback khi ngày hiện tại chưa chạy cronjob tổng hợp
+   */
+  async fetchRealtimeIncidentsFromIncidentService(
+    filter: DashboardFilterDto,
+    callOptions?: { authHeader?: string; requestId?: string },
+  ): Promise<any[] | null> {
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.set("page", "1");
+      queryParams.set("limit", "100");
+      if (filter.siteId) queryParams.set("siteId", filter.siteId);
+      if (filter.startDate) queryParams.set("fromDate", filter.startDate);
+      if (filter.endDate) queryParams.set("toDate", filter.endDate);
+
+      const headers: Record<string, string> = {};
+      if (callOptions?.authHeader) {
+        headers["Authorization"] = callOptions.authHeader;
+      }
+      if (callOptions?.requestId) {
+        headers["x-request-id"] = callOptions.requestId;
+      }
+      if (envConfig.gateway.internalSecret) {
+        headers["x-gateway-secret"] = envConfig.gateway.internalSecret;
+      }
+
+      const url = `${envConfig.incident.serviceUrl}/api/v1/incidents?${queryParams.toString()}`;
+      const res = await fetchInternalService<any>(url, {
+        headers,
+        timeoutMs: 3000,
+      });
+
+      if (res.ok && res.data) {
+        if (Array.isArray(res.data)) return res.data;
+        if (Array.isArray(res.data.data)) return res.data.data;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  computeSummaryFromIncidentList(
+    incidents: any[],
+    filter: DashboardFilterDto,
+  ): StatisticsSummaryDto {
+    const totalIncidents = incidents.length;
+    let openIncidents = 0;
+    let resolvedIncidents = 0;
+    let trueViolations = 0;
+    let falseAlarms = 0;
+
+    for (const inc of incidents) {
+      const status = String(inc.status || "").toUpperCase();
+      if (status === "PENDING_REVIEW") {
+        openIncidents++;
+      } else if (status === "CONFIRMED") {
+        trueViolations++;
+      } else if (status === "DISMISSED") {
+        falseAlarms++;
+      } else if (status === "RESOLVED" || status === "CLOSED") {
+        resolvedIncidents++;
+      }
+    }
+
+    const reviewedCount = trueViolations + falseAlarms;
+    const falseAlarmRate =
+      reviewedCount > 0
+        ? Number(((falseAlarms / reviewedCount) * 100).toFixed(2))
+        : 0;
+
+    const complianceRate =
+      totalIncidents > 0
+        ? Number(
+            Math.max(
+              0,
+              100 - (trueViolations / totalIncidents) * 100,
+            ).toFixed(2),
+          )
+        : 100;
+
+    return {
+      totalIncidents,
+      openIncidents,
+      resolvedIncidents,
+      trueViolations,
+      falseAlarms,
+      falseAlarmRate,
+      complianceRate,
+      meanTimeToResolveHours: 0,
+      periodStart: filter.startDate,
+      periodEnd: filter.endDate,
+    };
+  }
+
+  computeViolationBreakdownFromIncidentList(
+    incidents: any[],
+  ): ViolationTypeStatDto[] {
+    const breakdownMap = new Map<
+      string,
+      {
+        count: number;
+        severityBreakdown: {
+          LOW: number;
+          NORMAL: number;
+          MEDIUM: number;
+          HIGH: number;
+          CRITICAL: number;
+        };
+      }
+    >();
+
+    let grandTotal = 0;
+
+    for (const inc of incidents) {
+      grandTotal++;
+      const vType = inc.violationType || "UNKNOWN";
+      const item = breakdownMap.get(vType) || {
+        count: 0,
+        severityBreakdown: {
+          LOW: 0,
+          NORMAL: 0,
+          MEDIUM: 0,
+          HIGH: 0,
+          CRITICAL: 0,
+        },
+      };
+
+      item.count++;
+      const sev = String(inc.severity || "NORMAL").toUpperCase();
+      if (Object.prototype.hasOwnProperty.call(item.severityBreakdown, sev)) {
+        (item.severityBreakdown as any)[sev]++;
+      }
+      breakdownMap.set(vType, item);
+    }
+
+    return Array.from(breakdownMap.entries()).map(([violationType, data]) => ({
+      violationType,
+      count: data.count,
+      percentage:
+        grandTotal > 0
+          ? Number(((data.count / grandTotal) * 100).toFixed(2))
+          : 0,
+      severityBreakdown: data.severityBreakdown,
+    }));
+  }
+
   async getIncidentSummary(
     filter: DashboardFilterDto,
+    callOptions?: { authHeader?: string; requestId?: string },
   ): Promise<StatisticsSummaryDto> {
     const where: any = {};
     if (filter.siteId) {
@@ -106,6 +258,17 @@ export class ReportingRepository {
       resolvedIncidents += r.resolvedIncidents;
       falseAlarms += r.falseAlarms;
       trueViolations += r.trueViolations;
+    }
+
+    // Real-time Fallback nếu bảng incident_statistics chưa có dữ liệu tổng hợp
+    if (rows.length === 0 || totalIncidents === 0) {
+      const realtimeIncidents = await this.fetchRealtimeIncidentsFromIncidentService(
+        filter,
+        callOptions,
+      );
+      if (realtimeIncidents && realtimeIncidents.length > 0) {
+        return this.computeSummaryFromIncidentList(realtimeIncidents, filter);
+      }
     }
 
     const reviewedCount = trueViolations + falseAlarms;
@@ -206,6 +369,7 @@ export class ReportingRepository {
 
   async getViolationBreakdown(
     filter: DashboardFilterDto,
+    callOptions?: { authHeader?: string; requestId?: string },
   ): Promise<ViolationTypeStatDto[]> {
     const where: any = {};
     if (filter.siteId) {
@@ -258,10 +422,22 @@ export class ReportingRepository {
 
       item.count += r.totalCount;
       const sev = r.severity.toUpperCase();
-      if (sev in item.severityBreakdown) {
+      if (Object.prototype.hasOwnProperty.call(item.severityBreakdown, sev)) {
         (item.severityBreakdown as any)[sev] += r.totalCount;
       }
       breakdownMap.set(vType, item);
+    }
+
+    // Real-time Fallback nếu bảng report_statistics rỗng (chưa chạy cronjob hôm nay)
+    // Query realtime từ incident-service để biểu đồ Donut vi phạm không bị rỗng
+    if (rows.length === 0 || grandTotal === 0) {
+      const realtimeIncidents = await this.fetchRealtimeIncidentsFromIncidentService(
+        filter,
+        callOptions,
+      );
+      if (realtimeIncidents && realtimeIncidents.length > 0) {
+        return this.computeViolationBreakdownFromIncidentList(realtimeIncidents);
+      }
     }
 
     return Array.from(breakdownMap.entries()).map(([violationType, data]) => ({
@@ -1247,6 +1423,49 @@ export class ReportingRepository {
       cameraRankings,
       trends,
       aiPerformance,
+    };
+  }
+
+  async findActiveModelDetails(): Promise<ActiveModelSummaryDto> {
+    try {
+      const v = await (this.prisma as any).aiModelVersion.findFirst({
+        where: {
+          status: "DEPLOYED",
+          model: { status: AI_MODEL_STATUS.ACTIVE },
+        },
+        include: {
+          model: true,
+          performanceStatistics: {
+            orderBy: { statDate: "desc" },
+            take: 1,
+          },
+        },
+        orderBy: { deployedAt: "desc" },
+      });
+
+      if (v) {
+        const perf = v.performanceStatistics?.[0];
+        const metrics = (v.metrics as any) || {};
+        return {
+          name: v.model?.name || "YOLO11m-PPE",
+          version: v.version || "1.0.0",
+          latencyMs:
+            metrics.latencyMs ??
+            (perf?.avgLatencyMs ? Math.round(Number(perf.avgLatencyMs)) : 18),
+          fps:
+            metrics.fps ??
+            (perf?.avgFps ? Math.round(Number(perf.avgFps)) : 28),
+        };
+      }
+    } catch {
+      // Fallback an toàn khi DB chưa có bản ghi model nào
+    }
+
+    return {
+      name: "YOLO11m-PPE",
+      version: "1.0.0",
+      latencyMs: 18,
+      fps: 28,
     };
   }
 

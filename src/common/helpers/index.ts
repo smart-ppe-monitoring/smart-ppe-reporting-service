@@ -7,3 +7,4 @@ export * from "./url.helper";
 export * from "./template.helper";
 export * from "./slug.helper";
 export * from "./user-agent.helper";
+export * from "./http-client.helper";

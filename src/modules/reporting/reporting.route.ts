@@ -6,6 +6,7 @@ import { requirePermission } from "../../middlewares/permission.middleware";
 import { PERMISSIONS } from "../../common/constants/permission.constant";
 import {
   dashboardFilterSchema,
+  dashboardKpiFilterSchema,
   trendsFilterSchema,
   cameraStatsFilterSchema,
   aiPerformanceFilterSchema,
@@ -31,6 +32,13 @@ const controller = new ReportingController();
 // ── 1. Statistics & Dashboard Routes (/api/v1/statistics) ────────────────────
 
 statisticRouter.use(authMiddleware);
+
+statisticRouter.get(
+  "/dashboard-kpi",
+  requirePermission(PERMISSIONS.PPE_REPORTING_READ),
+  validate(dashboardKpiFilterSchema, "query"),
+  controller.getDashboardKpi,
+);
 
 statisticRouter.get(
   "/summary",

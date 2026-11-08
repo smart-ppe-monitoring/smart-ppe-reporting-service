@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { ReportingService, AuditLogger } from "./reporting.service";
 import {
   DashboardFilterDto,
+  DashboardKpiFilterDto,
   TrendsFilterDto,
   CameraStatsFilterDto,
   AiPerformanceFilterDto,
@@ -21,7 +22,45 @@ export class ReportingController {
     this.service = service || new ReportingService(undefined, auditLogger);
   }
 
+  // ── Helper ─────────────────────────────────────────────────────────────────
+
+  private extractAuthHeader(req: {
+    headers?: Record<string, any>;
+    cookies?: Record<string, any>;
+  }): string | undefined {
+    if (req.headers?.authorization) {
+      return req.headers.authorization;
+    }
+    if (req.cookies?.accessToken) {
+      return `Bearer ${req.cookies.accessToken}`;
+    }
+    return undefined;
+  }
+
   // ── 1. Statistics & Dashboard Endpoints ─────────────────────────────────────
+
+  getDashboardKpi = async (
+    req: Request<unknown, unknown, unknown, DashboardKpiFilterDto>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const authHeader = this.extractAuthHeader(req);
+      const requestId =
+        (req as any).id || (req.headers["x-request-id"] as string);
+      const kpis = await this.service.getDashboardKpi(
+        req.query,
+        req.user,
+        { authHeader, requestId },
+      );
+      return res.status(200).json({
+        success: true,
+        data: kpis,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  };
 
   getDashboardSummary = async (
     req: Request<unknown, unknown, unknown, DashboardFilterDto>,
@@ -29,9 +68,13 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
+      const authHeader = this.extractAuthHeader(req);
+      const requestId =
+        (req as any).id || (req.headers["x-request-id"] as string);
       const summary = await this.service.getDashboardSummary(
         req.query,
         req.user,
+        { authHeader, requestId },
       );
       return res.status(200).json({
         success: true,
@@ -67,9 +110,13 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
+      const authHeader = this.extractAuthHeader(req);
+      const requestId =
+        (req as any).id || (req.headers["x-request-id"] as string);
       const distribution = await this.service.getViolationDistribution(
         req.query,
         req.user,
+        { authHeader, requestId },
       );
       return res.status(200).json({
         success: true,

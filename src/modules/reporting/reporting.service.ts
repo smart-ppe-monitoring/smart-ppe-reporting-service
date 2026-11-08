@@ -1,6 +1,10 @@
 import { ReportingRepository } from "./reporting.repository";
 import {
   DashboardFilterDto,
+  DashboardKpiFilterDto,
+  DashboardKpiDto,
+  CameraStatusSummaryDto,
+  ActiveModelSummaryDto,
   TrendsFilterDto,
   CameraStatsFilterDto,
   AiPerformanceFilterDto,
@@ -36,6 +40,8 @@ import {
   AUDIT_ACTION,
   AUDIT_TARGET_TYPE,
 } from "../../common/constants/audit-log.constant";
+import { envConfig } from "../../config/env.config";
+import { fetchInternalService } from "../../common/helpers/http-client.helper";
 
 export interface AuditLogger {
   createAuditLog(data: {
@@ -160,12 +166,88 @@ export class ReportingService {
 
   // ── 1. Dashboard Statistics & Overview KPIs ─────────────────────────────────
 
+  async getDashboardKpi(
+    filter: DashboardKpiFilterDto,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
+    callOptions?: { authHeader?: string; requestId?: string },
+  ): Promise<DashboardKpiDto> {
+    const scopedFilter = this.resolveTenantSiteFilter(filter, user);
+
+    // 1. Lấy Incident Summary (tích hợp Real-time Fallback từ ppe_incident_db khi cronjob chưa chạy)
+    const summaryPromise = this.repository.getIncidentSummary(scopedFilter, callOptions);
+
+    // 2. Lấy Camera Status Counts từ Camera Service via HTTP
+    const cameraStatusPromise = this.fetchCameraStatusCounts(scopedFilter.siteId, callOptions);
+
+    // 3. Lấy Active AI Model từ CSDL nội bộ
+    const activeModelPromise = this.repository.findActiveModelDetails();
+
+    const [summary, cameraStatus, activeModel] = await Promise.all([
+      summaryPromise,
+      cameraStatusPromise,
+      activeModelPromise,
+    ]);
+
+    return {
+      totalIncidents: summary.totalIncidents,
+      pendingReview: summary.openIncidents,
+      complianceRate: summary.complianceRate,
+      cameraStatus,
+      activeModel,
+    };
+  }
+
+  private async fetchCameraStatusCounts(
+    siteId?: string,
+    callOptions?: { authHeader?: string; requestId?: string },
+  ): Promise<CameraStatusSummaryDto> {
+    try {
+      const url = new URL(`${envConfig.camera.serviceUrl}/api/v1/cameras/status-counts`);
+      if (siteId) {
+        url.searchParams.set("siteId", siteId);
+      }
+
+      const headers: Record<string, string> = {};
+      if (callOptions?.authHeader) {
+        headers["Authorization"] = callOptions.authHeader;
+      }
+      if (callOptions?.requestId) {
+        headers["x-request-id"] = callOptions.requestId;
+      }
+      if (envConfig.gateway.internalSecret) {
+        headers["x-gateway-secret"] = envConfig.gateway.internalSecret;
+      }
+
+      const res = await fetchInternalService<CameraStatusSummaryDto>(url.toString(), {
+        headers,
+        timeoutMs: 3000,
+      });
+
+      if (res.ok && res.data) {
+        return {
+          total: Number(res.data.total ?? 0),
+          online: Number(res.data.online ?? 0),
+          offline: Number(res.data.offline ?? 0),
+        };
+      }
+    } catch {
+      // Fallback an toàn khi camera service chưa sẵn sàng hoặc lỗi mạng
+    }
+
+    return {
+      total: 0,
+      online: 0,
+      offline: 0,
+    };
+  }
+
   async getDashboardSummary(
     filter: DashboardFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
+    callOptions?: { authHeader?: string; requestId?: string },
   ): Promise<StatisticsSummaryDto> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
-    return this.repository.getIncidentSummary(scopedFilter);
+    return this.repository.getIncidentSummary(scopedFilter, callOptions);
   }
 
   async getViolationTrends(
@@ -179,9 +261,10 @@ export class ReportingService {
   async getViolationDistribution(
     filter: DashboardFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
+    callOptions?: { authHeader?: string; requestId?: string },
   ): Promise<ViolationTypeStatDto[]> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
-    return this.repository.getViolationBreakdown(scopedFilter);
+    return this.repository.getViolationBreakdown(scopedFilter, callOptions);
   }
 
   async getCameraRankings(

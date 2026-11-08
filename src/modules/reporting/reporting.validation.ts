@@ -26,6 +26,10 @@ export function isDateRangeWithinDays(
 
 // ── 1. Statistics & KPI Filter Schemas ────────────────────────────────────────
 
+export const dashboardKpiFilterSchema = z.object({
+  siteId: z.string().uuid("Invalid siteId UUID format").optional(),
+});
+
 export const dashboardFilterSchema = z
   .object({
     siteId: z.string().uuid("Invalid siteId UUID format").optional(),
