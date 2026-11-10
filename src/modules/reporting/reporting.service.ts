@@ -3,6 +3,8 @@ import {
   DashboardFilterDto,
   DashboardKpiFilterDto,
   DashboardKpiDto,
+  HourlyRiskFilterDto,
+  HourlyRiskResponseDto,
   CameraStatusSummaryDto,
   ActiveModelSummaryDto,
   TrendsFilterDto,
@@ -248,6 +250,15 @@ export class ReportingService {
   ): Promise<StatisticsSummaryDto> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
     return this.repository.getIncidentSummary(scopedFilter, callOptions);
+  }
+
+  async getHourlyRisk(
+    filter: HourlyRiskFilterDto,
+    user?: { role?: string; siteIds?: string[]; siteId?: string },
+    callOptions?: { authHeader?: string; requestId?: string },
+  ): Promise<HourlyRiskResponseDto> {
+    const scopedFilter = this.resolveTenantSiteFilter(filter, user);
+    return this.repository.getHourlyRisk(scopedFilter, callOptions);
   }
 
   async getViolationTrends(
@@ -662,38 +673,42 @@ export class ReportingService {
       }
     }
 
-    if (!aggregated) {
-      aggregated = {
-        reportId: report.id,
-        reportType: report.reportType,
-        templateCode: report.template?.code,
-        templateName: report.template?.name,
-        siteId: report.siteId,
-        periodStart: String(report.periodStart).slice(0, 10),
-        periodEnd: String(report.periodEnd).slice(0, 10),
-        generatedBy: report.generatedBy,
-        generatedAt: String(report.generatedAt),
-        summary: {
-          totalIncidents: 0,
-          openIncidents: 0,
-          resolvedIncidents: 0,
-          trueViolations: 0,
-          falseAlarms: 0,
-          falseAlarmRate: 0,
-          complianceRate: 100,
-          meanTimeToResolveHours: 0,
+    const data: AggregatedReportDataDto = aggregated || {
+      reportId: report.id,
+      reportType: report.reportType,
+      templateCode: report.template?.code,
+      templateName: report.template?.name,
+      siteId: report.siteId,
+      periodStart: String(report.periodStart).slice(0, 10),
+      periodEnd: String(report.periodEnd).slice(0, 10),
+      generatedBy: report.generatedBy,
+      generatedAt: String(report.generatedAt),
+      summary: {
+        totalIncidents: 0,
+        openIncidents: 0,
+        resolvedIncidents: 0,
+        trueViolations: 0,
+        falseAlarms: 0,
+        falseAlarmRate: 0,
+        complianceRate: 100,
+        meanTimeToResolveHours: 0,
+        severityBreakdown: {
+          CRITICAL: { count: 0, resolved: 0, targetSlaMinutes: 15, actualMttrMinutes: 0 },
+          HIGH: { count: 0, resolved: 0, targetSlaMinutes: 30, actualMttrMinutes: 0 },
+          MEDIUM: { count: 0, resolved: 0, targetSlaMinutes: 60, actualMttrMinutes: 0 },
+          LOW: { count: 0, resolved: 0, targetSlaMinutes: 120, actualMttrMinutes: 0 },
         },
-        violationsBreakdown: [],
-        cameraRankings: [],
-        trends: [],
-      };
-    }
+      },
+      violationsBreakdown: [],
+      cameraRankings: [],
+      trends: [],
+    };
 
     let reportContent: string | Buffer;
     if (extension === "xlsx") {
-      reportContent = await ExcelReportEngine.generate(aggregated);
+      reportContent = await ExcelReportEngine.generate(data);
     } else if (extension === "pdf") {
-      reportContent = await PdfReportEngine.generate(aggregated);
+      reportContent = await PdfReportEngine.generate(data);
     } else if (extension === "json") {
       reportContent = JSON.stringify(
         {
@@ -704,8 +719,8 @@ export class ReportingService {
           periodEnd: report.periodEnd,
           generatedBy: report.generatedBy,
           generatedAt: report.generatedAt,
-          summary: aggregated.summary,
-          violationsBreakdown: aggregated.violationsBreakdown,
+          summary: data.summary,
+          violationsBreakdown: data.violationsBreakdown,
         },
         null,
         2,
@@ -713,7 +728,7 @@ export class ReportingService {
     } else if (extension === "csv") {
       reportContent = `reportId,reportType,siteId,periodStart,periodEnd,generatedBy,generatedAt\n"${report.id}","${report.reportType}","${report.siteId}","${report.periodStart}","${report.periodEnd}","${report.generatedBy}","${report.generatedAt}"\n`;
     } else {
-      reportContent = await PdfReportEngine.generate(aggregated);
+      reportContent = await PdfReportEngine.generate(data);
     }
 
     return {

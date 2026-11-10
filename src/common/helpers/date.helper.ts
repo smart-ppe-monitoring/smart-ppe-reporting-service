@@ -81,6 +81,14 @@ export function formatVietnamDate(
 }
 
 /**
+ * Lấy giờ (0-23) theo múi giờ Việt Nam (UTC+7).
+ */
+export function getVietnamHour(date: Date): number {
+  const localDate = new Date(date.getTime() + VIETNAM_OFFSET_MS);
+  return localDate.getUTCHours();
+}
+
+/**
  * Parses a date string in DD/MM/YYYY or YYYY-MM-DD format to a Date object in Vietnam time (00:00:00 UTC+7).
  */
 export function parseVietnamDate(dateString: string): Date | null {

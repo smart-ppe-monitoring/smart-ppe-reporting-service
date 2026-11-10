@@ -3,6 +3,7 @@ import { ReportingService, AuditLogger } from "./reporting.service";
 import {
   DashboardFilterDto,
   DashboardKpiFilterDto,
+  HourlyRiskFilterDto,
   TrendsFilterDto,
   CameraStatsFilterDto,
   AiPerformanceFilterDto,
@@ -79,6 +80,29 @@ export class ReportingController {
       return res.status(200).json({
         success: true,
         data: summary,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  getHourlyRisk = async (
+    req: Request<unknown, unknown, unknown, HourlyRiskFilterDto>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const authHeader = this.extractAuthHeader(req);
+      const requestId =
+        (req as any).id || (req.headers["x-request-id"] as string);
+      const hourlyRisk = await this.service.getHourlyRisk(
+        req.query,
+        req.user,
+        { authHeader, requestId },
+      );
+      return res.status(200).json({
+        success: true,
+        data: hourlyRisk,
       });
     } catch (error) {
       return next(error);

@@ -2,6 +2,7 @@ import { openapiRegistry } from "../../config/openapi/openapi.registry";
 import {
   dashboardFilterSchema,
   dashboardKpiFilterSchema,
+  hourlyRiskFilterSchema,
   trendsFilterSchema,
   cameraStatsFilterSchema,
   aiPerformanceFilterSchema,
@@ -80,7 +81,7 @@ export function registerReportingOpenApi(): void {
     method: "get",
     path: "/statistics/summary",
     tags: ["Reporting & Statistics"],
-    summary: "Lấy số liệu Dashboard KPIs tổng quan (Incidents, Violations, False Alarms, MTTR)",
+    summary: "Lấy số liệu Dashboard KPIs tổng quan (Incidents, Violations, False Alarms, MTTR, SLA Breakdown)",
     security: [{ BearerAuth: [] }],
     request: { query: dashboardFilterSchema },
     responses: {
@@ -101,6 +102,110 @@ export function registerReportingOpenApi(): void {
                 meanTimeToResolveHours: z.number().openapi({ example: 2.5 }),
                 periodStart: z.string().optional().openapi({ example: "2026-10-01" }),
                 periodEnd: z.string().optional().openapi({ example: "2026-10-10" }),
+                severityBreakdown: z.object({
+                  CRITICAL: z.object({
+                    count: z.number().openapi({ example: 2 }),
+                    resolved: z.number().openapi({ example: 2 }),
+                    targetSlaMinutes: z.number().openapi({ example: 15 }),
+                    actualMttrMinutes: z.number().openapi({ example: 9 }),
+                  }),
+                  HIGH: z.object({
+                    count: z.number().openapi({ example: 5 }),
+                    resolved: z.number().openapi({ example: 0 }),
+                    targetSlaMinutes: z.number().openapi({ example: 30 }),
+                    actualMttrMinutes: z.number().openapi({ example: 18 }),
+                  }),
+                  MEDIUM: z.object({
+                    count: z.number().openapi({ example: 0 }),
+                    resolved: z.number().openapi({ example: 0 }),
+                    targetSlaMinutes: z.number().openapi({ example: 60 }),
+                    actualMttrMinutes: z.number().openapi({ example: 36 }),
+                  }),
+                  LOW: z.object({
+                    count: z.number().openapi({ example: 0 }),
+                    resolved: z.number().openapi({ example: 0 }),
+                    targetSlaMinutes: z.number().openapi({ example: 120 }),
+                    actualMttrMinutes: z.number().openapi({ example: 72 }),
+                  }),
+                }),
+              }),
+            }),
+          },
+        },
+      },
+    },
+  });
+
+  openapiRegistry.registerPath({
+    method: "get",
+    path: "/statistics/hourly-risk",
+    tags: ["Reporting & Statistics"],
+    summary: "Thống kê rủi ro vi phạm PPE theo 24 giờ và chia sẵn 3 ca trực (Sáng 06:00-14:00, Chiều 14:00-22:00, Đêm 22:00-06:00)",
+    security: [{ BearerAuth: [] }],
+    request: { query: hourlyRiskFilterSchema },
+    responses: {
+      200: {
+        description: "Lấy dữ liệu rủi ro theo giờ và ca trực thành công",
+        content: {
+          "application/json": {
+            schema: z.object({
+              success: z.boolean().openapi({ example: true }),
+              data: z.object({
+                date: z.string().openapi({ example: "2026-11-10" }),
+                siteId: z.string().uuid().optional(),
+                hourly: z.array(
+                  z.object({
+                    hour: z.number().openapi({ example: 8 }),
+                    label: z.string().openapi({ example: "08:00" }),
+                    shift: z.enum(["MORNING", "AFTERNOON", "NIGHT"]).openapi({ example: "MORNING" }),
+                    count: z.number().openapi({ example: 4 }),
+                    riskLevel: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).openapi({ example: "HIGH" }),
+                    severityBreakdown: z.object({
+                      CRITICAL: z.number().openapi({ example: 1 }),
+                      HIGH: z.number().openapi({ example: 2 }),
+                      MEDIUM: z.number().openapi({ example: 1 }),
+                      LOW: z.number().openapi({ example: 0 }),
+                    }),
+                  }),
+                ),
+                shifts: z.object({
+                  morning: z.object({
+                    name: z.string().openapi({ example: "Ca Sáng" }),
+                    timeRange: z.string().openapi({ example: "06:00 - 14:00" }),
+                    totalIncidents: z.number().openapi({ example: 10 }),
+                    criticalCount: z.number().openapi({ example: 2 }),
+                    highCount: z.number().openapi({ example: 5 }),
+                    mediumCount: z.number().openapi({ example: 2 }),
+                    lowCount: z.number().openapi({ example: 1 }),
+                    riskLevel: z.string().openapi({ example: "HIGH" }),
+                  }),
+                  afternoon: z.object({
+                    name: z.string().openapi({ example: "Ca Chiều" }),
+                    timeRange: z.string().openapi({ example: "14:00 - 22:00" }),
+                    totalIncidents: z.number().openapi({ example: 4 }),
+                    criticalCount: z.number().openapi({ example: 0 }),
+                    highCount: z.number().openapi({ example: 1 }),
+                    mediumCount: z.number().openapi({ example: 2 }),
+                    lowCount: z.number().openapi({ example: 1 }),
+                    riskLevel: z.string().openapi({ example: "MEDIUM" }),
+                  }),
+                  night: z.object({
+                    name: z.string().openapi({ example: "Ca Đêm" }),
+                    timeRange: z.string().openapi({ example: "22:00 - 06:00" }),
+                    totalIncidents: z.number().openapi({ example: 1 }),
+                    criticalCount: z.number().openapi({ example: 0 }),
+                    highCount: z.number().openapi({ example: 0 }),
+                    mediumCount: z.number().openapi({ example: 0 }),
+                    lowCount: z.number().openapi({ example: 1 }),
+                    riskLevel: z.string().openapi({ example: "LOW" }),
+                  }),
+                }),
+                summary: z.object({
+                  totalIncidents: z.number().openapi({ example: 15 }),
+                  peakHour: z.number().openapi({ example: 9 }),
+                  peakShift: z.enum(["MORNING", "AFTERNOON", "NIGHT"]).openapi({ example: "MORNING" }),
+                  riskLevel: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).openapi({ example: "HIGH" }),
+                }),
               }),
             }),
           },
@@ -515,6 +620,33 @@ export function registerReportingOpenApi(): void {
     responses: {
       200: {
         description: "Triển khai phiên bản mô hình thành công",
+      },
+    },
+  });
+
+  // ── Diagnostics & Health Endpoints ─────────────────────────────────────────
+
+  openapiRegistry.registerPath({
+    method: "get",
+    path: "/statistics/health",
+    tags: ["Health & Diagnostics"],
+    summary: "Kiểm tra trạng thái sẵn sàng của dịch vụ báo cáo & phân tích",
+    responses: {
+      200: {
+        description: "Dịch vụ hoạt động bình thường",
+        content: {
+          "application/json": {
+            schema: z.object({
+              status: z.string().openapi({ example: "ok" }),
+              service: z.string().openapi({ example: "reporting-service" }),
+              checks: z.object({
+                database: z.string().openapi({ example: "up" }),
+              }),
+              timestamp: z.string().datetime(),
+              uptime: z.number(),
+            }),
+          },
+        },
       },
     },
   });

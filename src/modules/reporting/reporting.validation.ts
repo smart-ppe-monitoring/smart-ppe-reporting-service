@@ -30,6 +30,36 @@ export const dashboardKpiFilterSchema = z.object({
   siteId: z.string().uuid("Invalid siteId UUID format").optional(),
 });
 
+export const hourlyRiskFilterSchema = z
+  .object({
+    siteId: z.string().uuid("Invalid siteId UUID format").optional(),
+    date: z
+      .string()
+      .regex(dateRegex, "date must be in YYYY-MM-DD format")
+      .optional(),
+    startDate: z
+      .string()
+      .regex(dateRegex, "startDate must be in YYYY-MM-DD format")
+      .optional(),
+    endDate: z
+      .string()
+      .regex(dateRegex, "endDate must be in YYYY-MM-DD format")
+      .optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.startDate && data.endDate) {
+        return data.startDate === data.endDate;
+      }
+      return true;
+    },
+    {
+      message:
+        "Phân tích rủi ro theo 24 giờ chỉ hỗ trợ truy vấn trong 1 ngày duy nhất (startDate và endDate phải trùng nhau)",
+      path: ["endDate"],
+    },
+  );
+
 export const dashboardFilterSchema = z
   .object({
     siteId: z.string().uuid("Invalid siteId UUID format").optional(),

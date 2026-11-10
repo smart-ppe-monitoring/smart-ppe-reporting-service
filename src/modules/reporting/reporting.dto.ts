@@ -31,6 +31,55 @@ export interface CameraStatsFilterDto extends DashboardFilterDto {
   limit?: number;
 }
 
+export interface HourlyRiskFilterDto {
+  siteId?: string;
+  date?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface HourlyRiskItemDto {
+  hour: number;
+  label: string;
+  shift: "MORNING" | "AFTERNOON" | "NIGHT";
+  count: number;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  severityBreakdown: {
+    CRITICAL: number;
+    HIGH: number;
+    MEDIUM: number;
+    LOW: number;
+  };
+}
+
+export interface ShiftRiskSummaryDto {
+  name: string;
+  timeRange: string;
+  totalIncidents: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+}
+
+export interface HourlyRiskResponseDto {
+  date: string;
+  siteId?: string;
+  hourly: HourlyRiskItemDto[];
+  shifts: {
+    morning: ShiftRiskSummaryDto;
+    afternoon: ShiftRiskSummaryDto;
+    night: ShiftRiskSummaryDto;
+  };
+  summary: {
+    totalIncidents: number;
+    peakHour: number;
+    peakShift: "MORNING" | "AFTERNOON" | "NIGHT";
+    riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  };
+}
+
 export interface AiPerformanceFilterDto {
   cameraId?: string;
   startDate?: string;
@@ -64,6 +113,20 @@ export interface DashboardKpiFilterDto {
   siteId?: string;
 }
 
+export interface SeverityBreakdownItemDto {
+  count: number;
+  resolved: number;
+  targetSlaMinutes: number;
+  actualMttrMinutes: number;
+}
+
+export interface SeverityBreakdownMapDto {
+  CRITICAL: SeverityBreakdownItemDto;
+  HIGH: SeverityBreakdownItemDto;
+  MEDIUM: SeverityBreakdownItemDto;
+  LOW: SeverityBreakdownItemDto;
+}
+
 export interface StatisticsSummaryDto {
   totalIncidents: number;
   openIncidents: number;
@@ -75,6 +138,7 @@ export interface StatisticsSummaryDto {
   meanTimeToResolveHours: number; // Thời gian giải quyết trung bình (MTTR)
   periodStart?: string;
   periodEnd?: string;
+  severityBreakdown: SeverityBreakdownMapDto;
 }
 
 export interface TrendItemDto {

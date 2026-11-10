@@ -7,6 +7,7 @@ import { PERMISSIONS } from "../../common/constants/permission.constant";
 import {
   dashboardFilterSchema,
   dashboardKpiFilterSchema,
+  hourlyRiskFilterSchema,
   trendsFilterSchema,
   cameraStatsFilterSchema,
   aiPerformanceFilterSchema,
@@ -45,6 +46,13 @@ statisticRouter.get(
   requirePermission(PERMISSIONS.PPE_REPORTING_READ),
   validate(dashboardFilterSchema, "query"),
   controller.getDashboardSummary,
+);
+
+statisticRouter.get(
+  "/hourly-risk",
+  requirePermission(PERMISSIONS.PPE_REPORTING_READ),
+  validate(hourlyRiskFilterSchema, "query"),
+  controller.getHourlyRisk,
 );
 
 statisticRouter.get(

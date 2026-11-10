@@ -10,11 +10,18 @@ import {
 import {
   formatVietnamDate,
   getIsoWeekString,
+  getVietnamHour,
+  getVietnamDayRange,
 } from "../../common/helpers/date.helper";
 import {
   DashboardFilterDto,
   TrendsFilterDto,
   CameraStatsFilterDto,
+  HourlyRiskFilterDto,
+  HourlyRiskResponseDto,
+  HourlyRiskItemDto,
+  ShiftRiskSummaryDto,
+  SeverityBreakdownMapDto,
   AiPerformanceFilterDto,
   StatisticsSummaryDto,
   TrendItemDto,
@@ -110,7 +117,26 @@ export class ReportingRepository {
 
       if (res.ok && res.data) {
         if (Array.isArray(res.data)) return res.data;
-        if (Array.isArray(res.data.data)) return res.data.data;
+        if (Array.isArray(res.data.data)) {
+          const allIncidents = [...res.data.data];
+          const totalPages = Math.min(Number(res.data.meta?.totalPages) || 1, 10);
+          if (totalPages > 1) {
+            for (let page = 2; page <= totalPages; page++) {
+              queryParams.set("page", String(page));
+              const pageUrl = `${envConfig.incident.serviceUrl}/api/v1/incidents?${queryParams.toString()}`;
+              const pageRes = await fetchInternalService<any>(pageUrl, {
+                headers,
+                timeoutMs: 3000,
+              });
+              if (pageRes.ok && Array.isArray(pageRes.data?.data)) {
+                allIncidents.push(...pageRes.data.data);
+              } else {
+                break;
+              }
+            }
+          }
+          return allIncidents;
+        }
       }
       return null;
     } catch {
@@ -128,6 +154,20 @@ export class ReportingRepository {
     let trueViolations = 0;
     let falseAlarms = 0;
 
+    const severityBreakdown: SeverityBreakdownMapDto = {
+      CRITICAL: { count: 0, resolved: 0, targetSlaMinutes: 15, actualMttrMinutes: 0 },
+      HIGH: { count: 0, resolved: 0, targetSlaMinutes: 30, actualMttrMinutes: 0 },
+      MEDIUM: { count: 0, resolved: 0, targetSlaMinutes: 60, actualMttrMinutes: 0 },
+      LOW: { count: 0, resolved: 0, targetSlaMinutes: 120, actualMttrMinutes: 0 },
+    };
+
+    const resolutionMinutesMap = {
+      CRITICAL: [] as number[],
+      HIGH: [] as number[],
+      MEDIUM: [] as number[],
+      LOW: [] as number[],
+    };
+
     for (const inc of incidents) {
       const status = String(inc.status || "").toUpperCase();
       if (status === "PENDING_REVIEW") {
@@ -138,6 +178,35 @@ export class ReportingRepository {
         falseAlarms++;
       } else if (status === "RESOLVED" || status === "CLOSED") {
         resolvedIncidents++;
+      }
+
+      const sev = String(inc.severity || "NORMAL").toUpperCase();
+      let sevKey: keyof SeverityBreakdownMapDto = "LOW";
+      if (sev === "CRITICAL") sevKey = "CRITICAL";
+      else if (sev === "HIGH") sevKey = "HIGH";
+      else if (sev === "MEDIUM" || sev === "NORMAL") sevKey = "MEDIUM";
+      else sevKey = "LOW";
+
+      severityBreakdown[sevKey].count++;
+
+      if (status === "RESOLVED" || status === "CLOSED") {
+        severityBreakdown[sevKey].resolved++;
+        if (inc.detectedAt && (inc.resolvedAt || inc.updatedAt)) {
+          const resolvedTime = new Date(inc.resolvedAt || inc.updatedAt).getTime();
+          const detectedTime = new Date(inc.detectedAt).getTime();
+          const diffMinutes = Math.max(0, Math.round((resolvedTime - detectedTime) / (1000 * 60)));
+          if (!isNaN(diffMinutes) && diffMinutes > 0) {
+            resolutionMinutesMap[sevKey].push(diffMinutes);
+          }
+        }
+      }
+    }
+
+    for (const key of ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const) {
+      const recorded = resolutionMinutesMap[key];
+      if (recorded.length > 0) {
+        const avg = Math.round(recorded.reduce((a, b) => a + b, 0) / recorded.length);
+        severityBreakdown[key].actualMttrMinutes = avg;
       }
     }
 
@@ -168,6 +237,7 @@ export class ReportingRepository {
       meanTimeToResolveHours: 0,
       periodStart: filter.startDate,
       periodEnd: filter.endDate,
+      severityBreakdown,
     };
   }
 
@@ -295,6 +365,34 @@ export class ReportingRepository {
         ? Number((totalResolutionHours / resolvedIncidents).toFixed(2))
         : 0;
 
+    const severityBreakdown: SeverityBreakdownMapDto = {
+      CRITICAL: { count: 0, resolved: 0, targetSlaMinutes: 15, actualMttrMinutes: 0 },
+      HIGH: { count: 0, resolved: 0, targetSlaMinutes: 30, actualMttrMinutes: 0 },
+      MEDIUM: { count: 0, resolved: 0, targetSlaMinutes: 60, actualMttrMinutes: 0 },
+      LOW: { count: 0, resolved: 0, targetSlaMinutes: 120, actualMttrMinutes: 0 },
+    };
+
+    try {
+      const statRows = await this.prisma.reportStatistic.findMany({
+        where,
+        take: 5000,
+      });
+
+      for (const s of statRows) {
+        const sev = String(s.severity || "NORMAL").toUpperCase();
+        let sevKey: keyof SeverityBreakdownMapDto = "LOW";
+        if (sev === "CRITICAL") sevKey = "CRITICAL";
+        else if (sev === "HIGH") sevKey = "HIGH";
+        else if (sev === "MEDIUM" || sev === "NORMAL") sevKey = "MEDIUM";
+        else sevKey = "LOW";
+
+        severityBreakdown[sevKey].count += s.totalCount;
+        severityBreakdown[sevKey].resolved += s.resolvedCount;
+      }
+    } catch {
+      // Bỏ qua lỗi truy vấn phụ nếu có
+    }
+
     return {
       totalIncidents,
       openIncidents,
@@ -306,6 +404,177 @@ export class ReportingRepository {
       meanTimeToResolveHours,
       periodStart: filter.startDate,
       periodEnd: filter.endDate,
+      severityBreakdown,
+    };
+  }
+
+  /**
+   * Thống kê rủi ro vi phạm theo 24 giờ và phân ca trực (Sáng 06:00-14:00, Chiều 14:00-22:00, Đêm 22:00-06:00)
+   */
+  async getHourlyRisk(
+    filter: HourlyRiskFilterDto,
+    callOptions?: { authHeader?: string; requestId?: string },
+  ): Promise<HourlyRiskResponseDto> {
+    const targetDate =
+      filter.date ||
+      filter.startDate ||
+      formatVietnamDate(new Date(), "YYYY-MM-DD");
+
+    const { startOfDay, endOfDay } = getVietnamDayRange(targetDate);
+
+    const hourly: HourlyRiskItemDto[] = Array.from({ length: 24 }, (_, hour) => {
+      const shift: "MORNING" | "AFTERNOON" | "NIGHT" =
+        hour >= 6 && hour < 14
+          ? "MORNING"
+          : hour >= 14 && hour < 22
+          ? "AFTERNOON"
+          : "NIGHT";
+      return {
+        hour,
+        label: `${String(hour).padStart(2, "0")}:00`,
+        shift,
+        count: 0,
+        riskLevel: "LOW",
+        severityBreakdown: {
+          CRITICAL: 0,
+          HIGH: 0,
+          MEDIUM: 0,
+          LOW: 0,
+        },
+      };
+    });
+
+    const realtimeIncidents = await this.fetchRealtimeIncidentsFromIncidentService(
+      {
+        siteId: filter.siteId,
+        startDate: startOfDay.toISOString(),
+        endDate: endOfDay.toISOString(),
+      },
+      callOptions,
+    );
+
+    if (realtimeIncidents && Array.isArray(realtimeIncidents)) {
+      for (const inc of realtimeIncidents) {
+        const rawDate = inc.detectedAt || inc.createdAt;
+        if (!rawDate) continue;
+        const d = new Date(rawDate);
+        if (isNaN(d.getTime())) continue;
+
+        const hour = getVietnamHour(d);
+        if (hour >= 0 && hour < 24) {
+          const item = hourly[hour];
+          item.count++;
+
+          const sev = String(inc.severity || "NORMAL").toUpperCase();
+          if (sev === "CRITICAL") item.severityBreakdown.CRITICAL++;
+          else if (sev === "HIGH") item.severityBreakdown.HIGH++;
+          else if (sev === "MEDIUM" || sev === "NORMAL") item.severityBreakdown.MEDIUM++;
+          else item.severityBreakdown.LOW++;
+        }
+      }
+    }
+
+    // Xác định riskLevel từng giờ
+    for (const item of hourly) {
+      if (item.severityBreakdown.CRITICAL > 0) {
+        item.riskLevel = "CRITICAL";
+      } else if (item.severityBreakdown.HIGH > 0) {
+        item.riskLevel = "HIGH";
+      } else if (item.severityBreakdown.MEDIUM > 0 || item.count >= 3) {
+        item.riskLevel = "MEDIUM";
+      } else {
+        item.riskLevel = "LOW";
+      }
+    }
+
+    // Tổng hợp 3 ca trực
+    const morningHours = hourly.filter((h) => h.shift === "MORNING");
+    const afternoonHours = hourly.filter((h) => h.shift === "AFTERNOON");
+    const nightHours = hourly.filter((h) => h.shift === "NIGHT");
+
+    const aggregateShift = (
+      name: string,
+      timeRange: string,
+      hours: HourlyRiskItemDto[],
+    ): ShiftRiskSummaryDto => {
+      const totalIncidents = hours.reduce((acc, h) => acc + h.count, 0);
+      const criticalCount = hours.reduce((acc, h) => acc + h.severityBreakdown.CRITICAL, 0);
+      const highCount = hours.reduce((acc, h) => acc + h.severityBreakdown.HIGH, 0);
+      const mediumCount = hours.reduce((acc, h) => acc + h.severityBreakdown.MEDIUM, 0);
+      const lowCount = hours.reduce((acc, h) => acc + h.severityBreakdown.LOW, 0);
+
+      let riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" = "LOW";
+      if (criticalCount > 0 || highCount >= 3) {
+        riskLevel = "CRITICAL";
+      } else if (highCount > 0 || mediumCount >= 3) {
+        riskLevel = "HIGH";
+      } else if (mediumCount > 0 || totalIncidents >= 2) {
+        riskLevel = "MEDIUM";
+      }
+
+      return {
+        name,
+        timeRange,
+        totalIncidents,
+        criticalCount,
+        highCount,
+        mediumCount,
+        lowCount,
+        riskLevel,
+      };
+    };
+
+    const shifts = {
+      morning: aggregateShift("Ca Sáng", "06:00 - 14:00", morningHours),
+      afternoon: aggregateShift("Ca Chiều", "14:00 - 22:00", afternoonHours),
+      night: aggregateShift("Ca Đêm", "22:00 - 06:00", nightHours),
+    };
+
+    const totalIncidents = hourly.reduce((acc, h) => acc + h.count, 0);
+
+    // Xác định giờ cao điểm (peakHour)
+    let peakHour = 0;
+    let maxHourCount = -1;
+    for (const h of hourly) {
+      if (h.count > maxHourCount) {
+        maxHourCount = h.count;
+        peakHour = h.hour;
+      }
+    }
+
+    // Xác định ca cao điểm (peakShift)
+    let peakShift: "MORNING" | "AFTERNOON" | "NIGHT" = "MORNING";
+    const maxShiftCount = Math.max(
+      shifts.morning.totalIncidents,
+      shifts.afternoon.totalIncidents,
+      shifts.night.totalIncidents,
+    );
+    if (maxShiftCount === shifts.afternoon.totalIncidents && shifts.afternoon.totalIncidents > shifts.morning.totalIncidents) {
+      peakShift = "AFTERNOON";
+    } else if (maxShiftCount === shifts.night.totalIncidents && shifts.night.totalIncidents > shifts.morning.totalIncidents) {
+      peakShift = "NIGHT";
+    }
+
+    let overallRiskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" = "LOW";
+    if (shifts.morning.riskLevel === "CRITICAL" || shifts.afternoon.riskLevel === "CRITICAL" || shifts.night.riskLevel === "CRITICAL") {
+      overallRiskLevel = "CRITICAL";
+    } else if (shifts.morning.riskLevel === "HIGH" || shifts.afternoon.riskLevel === "HIGH" || shifts.night.riskLevel === "HIGH") {
+      overallRiskLevel = "HIGH";
+    } else if (shifts.morning.riskLevel === "MEDIUM" || shifts.afternoon.riskLevel === "MEDIUM" || shifts.night.riskLevel === "MEDIUM") {
+      overallRiskLevel = "MEDIUM";
+    }
+
+    return {
+      date: targetDate,
+      siteId: filter.siteId,
+      hourly,
+      shifts,
+      summary: {
+        totalIncidents,
+        peakHour,
+        peakShift,
+        riskLevel: overallRiskLevel,
+      },
     };
   }
 
