@@ -15,6 +15,7 @@ export interface InternalHttpResponse<T = any> {
   ok: boolean;
   status: number;
   data?: T;
+  meta?: any;
   error?: string;
 }
 
@@ -49,10 +50,14 @@ export async function fetchInternalService<T = any>(
 
     const contentType = response.headers.get("content-type") || "";
     let parsedData: any = null;
+    let parsedMeta: any = undefined;
 
     if (contentType.includes("application/json")) {
       const json = await response.json();
       parsedData = json && json.data !== undefined ? json.data : json;
+      if (json && typeof json === "object" && json.meta !== undefined) {
+        parsedMeta = json.meta;
+      }
     } else {
       parsedData = await response.text();
     }
@@ -63,6 +68,7 @@ export async function fetchInternalService<T = any>(
         status: response.status,
         error: `HTTP ${response.status}: ${response.statusText}`,
         data: parsedData,
+        ...(parsedMeta !== undefined ? { meta: parsedMeta } : {}),
       };
     }
 
@@ -70,6 +76,7 @@ export async function fetchInternalService<T = any>(
       ok: true,
       status: response.status,
       data: parsedData as T,
+      ...(parsedMeta !== undefined ? { meta: parsedMeta } : {}),
     };
   } catch (err: any) {
     clearTimeout(timer);

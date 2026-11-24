@@ -53,6 +53,49 @@ import {
 import { AppError } from "../../common/errors/app-error";
 import { ERROR_CODE } from "../../common/errors/error-code";
 
+export interface ReportingCallOptions {
+  authHeader?: string;
+  requestId?: string;
+  getRealtimeIncidents?: () => Promise<any[] | null>;
+}
+
+const MAX_REALTIME_PAGES = 10;
+
+function normalizeIncidentDateBoundary(
+  dateStr: string,
+  bound: "start" | "end",
+): string {
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    try {
+      const { startOfDay, endOfDay } = getVietnamDayRange(trimmed);
+      return (bound === "start" ? startOfDay : endOfDay).toISOString();
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
+
+function extractPagedIncidents(res: { data?: any; meta?: any }): {
+  items: any[] | null;
+  totalPages: number;
+} {
+  if (Array.isArray(res.data)) {
+    return {
+      items: res.data,
+      totalPages: Number(res.meta?.totalPages) || 1,
+    };
+  }
+  if (res.data && Array.isArray(res.data.data)) {
+    return {
+      items: res.data.data,
+      totalPages: Number(res.data?.meta?.totalPages ?? res.meta?.totalPages) || 1,
+    };
+  }
+  return { items: null, totalPages: 1 };
+}
+
 function serializeAiPerformance(stat: any): AiPerformanceStatDto {
   return {
     id: stat.id,
@@ -88,15 +131,25 @@ export class ReportingRepository {
    */
   async fetchRealtimeIncidentsFromIncidentService(
     filter: DashboardFilterDto,
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<any[] | null> {
     try {
       const queryParams = new URLSearchParams();
       queryParams.set("page", "1");
       queryParams.set("limit", "100");
       if (filter.siteId) queryParams.set("siteId", filter.siteId);
-      if (filter.startDate) queryParams.set("fromDate", filter.startDate);
-      if (filter.endDate) queryParams.set("toDate", filter.endDate);
+      if (filter.startDate) {
+        queryParams.set(
+          "fromDate",
+          normalizeIncidentDateBoundary(filter.startDate, "start"),
+        );
+      }
+      if (filter.endDate) {
+        queryParams.set(
+          "toDate",
+          normalizeIncidentDateBoundary(filter.endDate, "end"),
+        );
+      }
 
       const headers: Record<string, string> = {};
       if (callOptions?.authHeader) {
@@ -115,33 +168,47 @@ export class ReportingRepository {
         timeoutMs: 3000,
       });
 
-      if (res.ok && res.data) {
-        if (Array.isArray(res.data)) return res.data;
-        if (Array.isArray(res.data.data)) {
-          const allIncidents = [...res.data.data];
-          const totalPages = Math.min(Number(res.data.meta?.totalPages) || 1, 10);
-          if (totalPages > 1) {
-            for (let page = 2; page <= totalPages; page++) {
-              queryParams.set("page", String(page));
-              const pageUrl = `${envConfig.incident.serviceUrl}/api/v1/incidents?${queryParams.toString()}`;
-              const pageRes = await fetchInternalService<any>(pageUrl, {
-                headers,
-                timeoutMs: 3000,
-              });
-              if (pageRes.ok && Array.isArray(pageRes.data?.data)) {
-                allIncidents.push(...pageRes.data.data);
-              } else {
-                break;
-              }
+      if (res.ok && res.data !== undefined) {
+        const firstPage = extractPagedIncidents(res);
+        if (!firstPage.items) return null;
+
+        const allIncidents = [...firstPage.items];
+        const totalPages = Math.min(
+          Math.max(firstPage.totalPages, 1),
+          MAX_REALTIME_PAGES,
+        );
+        if (totalPages > 1) {
+          for (let page = 2; page <= totalPages; page++) {
+            queryParams.set("page", String(page));
+            const pageUrl = `${envConfig.incident.serviceUrl}/api/v1/incidents?${queryParams.toString()}`;
+            const pageRes = await fetchInternalService<any>(pageUrl, {
+              headers,
+              timeoutMs: 3000,
+            });
+            if (!pageRes.ok) break;
+            const nextPage = extractPagedIncidents(pageRes);
+            if (!nextPage.items || nextPage.items.length === 0) {
+              break;
             }
+            allIncidents.push(...nextPage.items);
           }
-          return allIncidents;
         }
+        return allIncidents;
       }
       return null;
     } catch {
       return null;
     }
+  }
+
+  private async resolveRealtimeIncidents(
+    filter: DashboardFilterDto,
+    callOptions?: ReportingCallOptions,
+  ): Promise<any[] | null> {
+    if (typeof callOptions?.getRealtimeIncidents === "function") {
+      return callOptions.getRealtimeIncidents();
+    }
+    return this.fetchRealtimeIncidentsFromIncidentService(filter, callOptions);
   }
 
   computeSummaryFromIncidentList(
@@ -226,6 +293,23 @@ export class ReportingRepository {
           )
         : 100;
 
+    const allResolutionMinutes = [
+      ...resolutionMinutesMap.CRITICAL,
+      ...resolutionMinutesMap.HIGH,
+      ...resolutionMinutesMap.MEDIUM,
+      ...resolutionMinutesMap.LOW,
+    ];
+    const meanTimeToResolveHours =
+      allResolutionMinutes.length > 0
+        ? Number(
+            (
+              allResolutionMinutes.reduce((sum, mins) => sum + mins, 0) /
+              allResolutionMinutes.length /
+              60
+            ).toFixed(2),
+          )
+        : 0;
+
     return {
       totalIncidents,
       openIncidents,
@@ -234,11 +318,108 @@ export class ReportingRepository {
       falseAlarms,
       falseAlarmRate,
       complianceRate,
-      meanTimeToResolveHours: 0,
+      meanTimeToResolveHours,
       periodStart: filter.startDate,
       periodEnd: filter.endDate,
       severityBreakdown,
     };
+  }
+
+  computeTrendsFromIncidentList(
+    incidents: any[],
+    groupBy: string = STATISTIC_GROUP_BY.DAY,
+  ): TrendItemDto[] {
+    const groups = new Map<string, TrendItemDto>();
+
+    for (const inc of incidents) {
+      const rawDate = inc.detectedAt || inc.createdAt;
+      if (!rawDate) continue;
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) continue;
+
+      const dayKey = formatVietnamDate(d, "YYYY-MM-DD");
+      let key = dayKey;
+      if (groupBy === STATISTIC_GROUP_BY.WEEK) {
+        key = getIsoWeekString(new Date(`${dayKey}T12:00:00Z`));
+      } else if (groupBy === STATISTIC_GROUP_BY.MONTH) {
+        key = dayKey.slice(0, 7);
+      }
+
+      const existing = groups.get(key) || {
+        date: key,
+        totalIncidents: 0,
+        trueViolations: 0,
+        falseAlarms: 0,
+        resolvedCount: 0,
+      };
+
+      const status = String(inc.status || "").toUpperCase();
+      existing.totalIncidents++;
+      if (status === "CONFIRMED") {
+        existing.trueViolations++;
+      } else if (status === "DISMISSED") {
+        existing.falseAlarms++;
+      } else if (status === "RESOLVED" || status === "CLOSED") {
+        existing.resolvedCount++;
+      }
+
+      groups.set(key, existing);
+    }
+
+    return Array.from(groups.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
+  }
+
+  computeCameraRankingsFromIncidentList(
+    incidents: any[],
+    limit: number = 10,
+  ): CameraStatDto[] {
+    const cameraMap = new Map<
+      string,
+      {
+        totalViolations: number;
+        confirmedCount: number;
+        falseAlarmCount: number;
+        resolvedCount: number;
+      }
+    >();
+
+    for (const inc of incidents) {
+      const camId =
+        typeof inc.cameraId === "string" ? inc.cameraId.trim() : "";
+      if (!camId) continue;
+
+      const item = cameraMap.get(camId) || {
+        totalViolations: 0,
+        confirmedCount: 0,
+        falseAlarmCount: 0,
+        resolvedCount: 0,
+      };
+
+      item.totalViolations++;
+      const status = String(inc.status || "").toUpperCase();
+      if (status === "CONFIRMED") {
+        item.confirmedCount++;
+      } else if (status === "DISMISSED") {
+        item.falseAlarmCount++;
+      } else if (status === "RESOLVED" || status === "CLOSED") {
+        item.resolvedCount++;
+      }
+
+      cameraMap.set(camId, item);
+    }
+
+    return Array.from(cameraMap.entries())
+      .map(([cameraId, stats]) => ({
+        cameraId,
+        totalViolations: stats.totalViolations,
+        confirmedCount: stats.confirmedCount,
+        falseAlarmCount: stats.falseAlarmCount,
+        resolvedCount: stats.resolvedCount,
+      }))
+      .sort((a, b) => b.totalViolations - a.totalViolations)
+      .slice(0, limit);
   }
 
   computeViolationBreakdownFromIncidentList(
@@ -295,7 +476,7 @@ export class ReportingRepository {
 
   async getIncidentSummary(
     filter: DashboardFilterDto,
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<StatisticsSummaryDto> {
     const where: any = {};
     if (filter.siteId) {
@@ -332,7 +513,7 @@ export class ReportingRepository {
 
     // Real-time Fallback nếu bảng incident_statistics chưa có dữ liệu tổng hợp
     if (rows.length === 0 || totalIncidents === 0) {
-      const realtimeIncidents = await this.fetchRealtimeIncidentsFromIncidentService(
+      const realtimeIncidents = await this.resolveRealtimeIncidents(
         filter,
         callOptions,
       );
@@ -580,7 +761,10 @@ export class ReportingRepository {
 
   // ── 2. Time-Series Trends ───────────────────────────────────────────────────
 
-  async getIncidentTrends(filter: TrendsFilterDto): Promise<TrendItemDto[]> {
+  async getIncidentTrends(
+    filter: TrendsFilterDto,
+    callOptions?: ReportingCallOptions,
+  ): Promise<TrendItemDto[]> {
     const where: any = {};
     if (filter.siteId) {
       where.siteId = filter.siteId;
@@ -603,6 +787,7 @@ export class ReportingRepository {
 
     const groupBy = filter.groupBy || STATISTIC_GROUP_BY.DAY;
     const groups = new Map<string, TrendItemDto>();
+    let totalRolledUp = 0;
 
     for (const r of rows) {
       const d =
@@ -628,7 +813,18 @@ export class ReportingRepository {
       existing.trueViolations += r.trueViolations;
       existing.falseAlarms += r.falseAlarms;
       existing.resolvedCount += r.resolvedIncidents;
+      totalRolledUp += r.totalIncidents;
       groups.set(key, existing);
+    }
+
+    if (rows.length === 0 || totalRolledUp === 0) {
+      const realtimeIncidents = await this.resolveRealtimeIncidents(
+        filter,
+        callOptions,
+      );
+      if (realtimeIncidents && realtimeIncidents.length > 0) {
+        return this.computeTrendsFromIncidentList(realtimeIncidents, groupBy);
+      }
     }
 
     return Array.from(groups.values());
@@ -638,7 +834,7 @@ export class ReportingRepository {
 
   async getViolationBreakdown(
     filter: DashboardFilterDto,
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<ViolationTypeStatDto[]> {
     const where: any = {};
     if (filter.siteId) {
@@ -700,7 +896,7 @@ export class ReportingRepository {
     // Real-time Fallback nếu bảng report_statistics rỗng (chưa chạy cronjob hôm nay)
     // Query realtime từ incident-service để biểu đồ Donut vi phạm không bị rỗng
     if (rows.length === 0 || grandTotal === 0) {
-      const realtimeIncidents = await this.fetchRealtimeIncidentsFromIncidentService(
+      const realtimeIncidents = await this.resolveRealtimeIncidents(
         filter,
         callOptions,
       );
@@ -724,6 +920,7 @@ export class ReportingRepository {
 
   async getCameraRankings(
     filter: CameraStatsFilterDto,
+    callOptions?: ReportingCallOptions,
   ): Promise<CameraStatDto[]> {
     const where: any = {
       cameraId: { not: null },
@@ -774,6 +971,21 @@ export class ReportingRepository {
       cameraMap.set(camId, item);
     }
 
+    const limit = filter.limit || 10;
+
+    if (rows.length === 0 || cameraMap.size === 0) {
+      const realtimeIncidents = await this.resolveRealtimeIncidents(
+        filter,
+        callOptions,
+      );
+      if (realtimeIncidents && realtimeIncidents.length > 0) {
+        return this.computeCameraRankingsFromIncidentList(
+          realtimeIncidents,
+          limit,
+        );
+      }
+    }
+
     const result = Array.from(cameraMap.entries())
       .map(([cameraId, stats]) => ({
         cameraId,
@@ -784,7 +996,6 @@ export class ReportingRepository {
       }))
       .sort((a, b) => b.totalViolations - a.totalViolations);
 
-    const limit = filter.limit || 10;
     return result.slice(0, limit);
   }
 
@@ -1624,16 +1835,19 @@ export class ReportingRepository {
     }, DEFAULT_REPORTING_TRANSACTION_OPTIONS);
   }
 
-  async getAggregatedReportData(report: {
-    id: string;
-    siteId: string;
-    reportType: string;
-    periodStart: Date | string;
-    periodEnd: Date | string;
-    generatedBy: string;
-    generatedAt: Date | string;
-    template?: { code?: string; name?: string; fileType?: string } | null;
-  }): Promise<AggregatedReportDataDto> {
+  async getAggregatedReportData(
+    report: {
+      id: string;
+      siteId: string;
+      reportType: string;
+      periodStart: Date | string;
+      periodEnd: Date | string;
+      generatedBy: string;
+      generatedAt: Date | string;
+      template?: { code?: string; name?: string; fileType?: string } | null;
+    },
+    callOptions?: ReportingCallOptions,
+  ): Promise<AggregatedReportDataDto> {
     const startDate =
       report.periodStart instanceof Date
         ? report.periodStart.toISOString().slice(0, 10)
@@ -1649,18 +1863,39 @@ export class ReportingRepository {
       endDate,
     };
 
+    // Chia sẻ 1 promise fetch realtime duy nhất trong cùng lần xuất báo cáo để tránh gọi trùng 4 lần HTTP sang incident-service
+    let sharedRealtimePromise: Promise<any[] | null> | undefined;
+    const sharedCallOptions: ReportingCallOptions = {
+      ...callOptions,
+      getRealtimeIncidents: () => {
+        if (typeof callOptions?.getRealtimeIncidents === "function") {
+          return callOptions.getRealtimeIncidents();
+        }
+        if (!sharedRealtimePromise) {
+          sharedRealtimePromise = this.fetchRealtimeIncidentsFromIncidentService(
+            filter,
+            callOptions,
+          );
+        }
+        return sharedRealtimePromise;
+      },
+    };
+
     const [summary, violationsBreakdown, cameraRankings, trends, rawAiPerformance] =
       await Promise.all([
-        this.getIncidentSummary(filter),
-        this.getViolationBreakdown(filter),
-        this.getCameraRankings({ ...filter, limit: 10 }),
-        this.getIncidentTrends({
-          ...filter,
-          groupBy:
-            report.reportType === "MONTHLY"
-              ? STATISTIC_GROUP_BY.WEEK
-              : STATISTIC_GROUP_BY.DAY,
-        }),
+        this.getIncidentSummary(filter, sharedCallOptions),
+        this.getViolationBreakdown(filter, sharedCallOptions),
+        this.getCameraRankings({ ...filter, limit: 10 }, sharedCallOptions),
+        this.getIncidentTrends(
+          {
+            ...filter,
+            groupBy:
+              report.reportType === "MONTHLY"
+                ? STATISTIC_GROUP_BY.WEEK
+                : STATISTIC_GROUP_BY.DAY,
+          },
+          sharedCallOptions,
+        ),
         this.getAiPerformanceStats({ startDate, endDate }).catch(() => []),
       ]);
 

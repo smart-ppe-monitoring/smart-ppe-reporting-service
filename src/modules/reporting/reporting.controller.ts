@@ -38,6 +38,17 @@ export class ReportingController {
     return undefined;
   }
 
+  private extractCallOptions(req: {
+    id?: string;
+    headers?: Record<string, any>;
+    cookies?: Record<string, any>;
+  }): { authHeader?: string; requestId?: string } {
+    return {
+      authHeader: this.extractAuthHeader(req),
+      requestId: req.id || (req.headers?.["x-request-id"] as string),
+    };
+  }
+
   // ── 1. Statistics & Dashboard Endpoints ─────────────────────────────────────
 
   getDashboardKpi = async (
@@ -118,6 +129,7 @@ export class ReportingController {
       const trends = await this.service.getViolationTrends(
         req.query,
         req.user,
+        this.extractCallOptions(req),
       );
       return res.status(200).json({
         success: true,
@@ -134,13 +146,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const authHeader = this.extractAuthHeader(req);
-      const requestId =
-        (req as any).id || (req.headers["x-request-id"] as string);
       const distribution = await this.service.getViolationDistribution(
         req.query,
         req.user,
-        { authHeader, requestId },
+        this.extractCallOptions(req),
       );
       return res.status(200).json({
         success: true,
@@ -160,6 +169,7 @@ export class ReportingController {
       const rankings = await this.service.getCameraRankings(
         req.query,
         req.user,
+        this.extractCallOptions(req),
       );
       return res.status(200).json({
         success: true,
@@ -374,6 +384,7 @@ export class ReportingController {
         req.params.id,
         req.user?.id,
         req.user?.role,
+        this.extractCallOptions(req),
       );
       res.setHeader("Content-Type", file.contentType);
       res.setHeader(

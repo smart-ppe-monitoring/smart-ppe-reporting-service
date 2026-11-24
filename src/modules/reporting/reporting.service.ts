@@ -1,4 +1,7 @@
-import { ReportingRepository } from "./reporting.repository";
+import {
+  ReportingRepository,
+  ReportingCallOptions,
+} from "./reporting.repository";
 import {
   DashboardFilterDto,
   DashboardKpiFilterDto,
@@ -264,15 +267,16 @@ export class ReportingService {
   async getViolationTrends(
     filter: TrendsFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<TrendItemDto[]> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
-    return this.repository.getIncidentTrends(scopedFilter);
+    return this.repository.getIncidentTrends(scopedFilter, callOptions);
   }
 
   async getViolationDistribution(
     filter: DashboardFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<ViolationTypeStatDto[]> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
     return this.repository.getViolationBreakdown(scopedFilter, callOptions);
@@ -281,9 +285,10 @@ export class ReportingService {
   async getCameraRankings(
     filter: CameraStatsFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<CameraStatDto[]> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
-    return this.repository.getCameraRankings(scopedFilter);
+    return this.repository.getCameraRankings(scopedFilter, callOptions);
   }
 
   // ── 2. AI Performance Statistics & Telemetry ───────────────────────────────
@@ -637,6 +642,7 @@ export class ReportingService {
     id: string,
     userId?: string,
     userRole?: string,
+    callOptions?: ReportingCallOptions,
   ): Promise<{ content: Buffer; contentType: string; fileName: string }> {
     const report = await this.repository.findReportGenerationById(id);
     if (!report) {
@@ -664,7 +670,10 @@ export class ReportingService {
     let aggregated: AggregatedReportDataDto | null = null;
     if (typeof this.repository.getAggregatedReportData === "function") {
       try {
-        aggregated = await this.repository.getAggregatedReportData(report);
+        aggregated = await this.repository.getAggregatedReportData(
+          report,
+          callOptions,
+        );
       } catch (err: any) {
         console.warn(
           `[Reporting Service] Could not fetch aggregated report data: ${err?.message}`,
