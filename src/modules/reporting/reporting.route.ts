@@ -2,6 +2,7 @@ import { Router } from "express";
 import { ReportingController } from "./reporting.controller";
 import { validate } from "../../middlewares/validate.middleware";
 import { authMiddleware } from "../../middlewares/auth.middleware";
+import { requireInternalServiceToken } from "../../middlewares/internal-auth.middleware";
 import { requirePermission } from "../../middlewares/permission.middleware";
 import { PERMISSIONS } from "../../common/constants/permission.constant";
 import {
@@ -157,6 +158,21 @@ reportRouter.get(
 );
 
 // ── 3. AI Models & Governance Routes (/api/v1/ai-models) ─────────────────────
+
+// Internal M2M endpoints cho Site Service / AI Service (phải đặt trước authMiddleware)
+aiModelRouter.get(
+  "/internal/active-version",
+  requireInternalServiceToken,
+  validate(activeModelVersionQuerySchema, "query"),
+  controller.getActiveModelVersion,
+);
+
+aiModelRouter.get(
+  "/internal/versions/:versionId",
+  requireInternalServiceToken,
+  validate(versionIdParamSchema, "params"),
+  controller.getAiModelVersionById,
+);
 
 aiModelRouter.use(authMiddleware);
 
