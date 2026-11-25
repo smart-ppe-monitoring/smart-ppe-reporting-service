@@ -108,6 +108,14 @@ function serializeAiPerformance(stat: any): AiPerformanceStatDto {
     avgFps: Number(stat.avgFps ?? 0),
     avgLatencyMs: Number(stat.avgLatencyMs ?? 0),
     maxLatencyMs: Number(stat.maxLatencyMs ?? 0),
+    p95LatencyMs:
+      stat.p95LatencyMs !== null && stat.p95LatencyMs !== undefined
+        ? Number(stat.p95LatencyMs)
+        : null,
+    e2eAlertLatencyMs:
+      stat.e2eAlertLatencyMs !== null && stat.e2eAlertLatencyMs !== undefined
+        ? Number(stat.e2eAlertLatencyMs)
+        : null,
     totalFrames: stat.totalFrames != null ? stat.totalFrames.toString() : "0",
   };
 }
@@ -1093,7 +1101,14 @@ export class ReportingRepository {
   async recordAiPerformanceMetric(
     dto: RecordAiPerformanceDto,
   ): Promise<AiPerformanceStatDto> {
-    if (!Number.isFinite(dto.fps) || !Number.isFinite(dto.latencyMs)) {
+    if (
+      !Number.isFinite(dto.fps) ||
+      !Number.isFinite(dto.latencyMs) ||
+      (dto.p95LatencyMs !== undefined &&
+        (!Number.isFinite(dto.p95LatencyMs) || dto.p95LatencyMs < 0)) ||
+      (dto.e2eAlertLatencyMs !== undefined &&
+        (!Number.isFinite(dto.e2eAlertLatencyMs) || dto.e2eAlertLatencyMs < 0))
+    ) {
       throw new AppError(
         "Dữ liệu hiệu năng không hợp lệ (phải là số thực hữu hạn)",
         400,
@@ -1120,6 +1135,29 @@ export class ReportingRepository {
       }
     }
 
+    const computeWeightedOptionalMetric = (
+      existingVal: unknown,
+      incomingVal: number | undefined,
+      prevFrames: bigint,
+      nextTotalFrames: bigint,
+    ): number | null => {
+      if (incomingVal === undefined) {
+        return existingVal !== null && existingVal !== undefined
+          ? Number(existingVal)
+          : null;
+      }
+      if (existingVal !== null && existingVal !== undefined) {
+        return Number(
+          (
+            (Number(existingVal) * Number(prevFrames) +
+              incomingVal * Number(frameCount)) /
+            Number(nextTotalFrames)
+          ).toFixed(2),
+        );
+      }
+      return Number(incomingVal.toFixed(2));
+    };
+
     const applyWeightedUpdate = async (existing: any) => {
       const prevTotalFrames = existing.totalFrames;
       const newTotalFrames = prevTotalFrames + frameCount;
@@ -1141,12 +1179,31 @@ export class ReportingRepository {
           Number(newTotalFrames)
         ).toFixed(2),
       );
+      const updatedP95LatencyMs = computeWeightedOptionalMetric(
+        existing.p95LatencyMs,
+        dto.p95LatencyMs,
+        prevTotalFrames,
+        newTotalFrames,
+      );
+      const updatedE2eAlertLatencyMs = computeWeightedOptionalMetric(
+        existing.e2eAlertLatencyMs,
+        dto.e2eAlertLatencyMs,
+        prevTotalFrames,
+        newTotalFrames,
+      );
       const updatedMaxLatency = Math.max(
         existing.maxLatencyMs,
         Math.round(dto.latencyMs),
+        dto.p95LatencyMs !== undefined ? Math.round(dto.p95LatencyMs) : 0,
       );
 
-      if (!Number.isFinite(updatedAvgFps) || !Number.isFinite(updatedAvgLatency)) {
+      if (
+        !Number.isFinite(updatedAvgFps) ||
+        !Number.isFinite(updatedAvgLatency) ||
+        (updatedP95LatencyMs !== null && !Number.isFinite(updatedP95LatencyMs)) ||
+        (updatedE2eAlertLatencyMs !== null &&
+          !Number.isFinite(updatedE2eAlertLatencyMs))
+      ) {
         throw new AppError(
           "Dữ liệu hiệu năng tính toán không hợp lệ (vượt quá giới hạn)",
           400,
@@ -1160,6 +1217,8 @@ export class ReportingRepository {
           avgFps: updatedAvgFps,
           avgLatencyMs: updatedAvgLatency,
           maxLatencyMs: updatedMaxLatency,
+          p95LatencyMs: updatedP95LatencyMs,
+          e2eAlertLatencyMs: updatedE2eAlertLatencyMs,
           totalFrames: newTotalFrames,
           modelVersionId: dto.modelVersionId ?? existing.modelVersionId,
         },
@@ -1189,7 +1248,18 @@ export class ReportingRepository {
           statDate: normalizedDate,
           avgFps: Number(dto.fps.toFixed(2)),
           avgLatencyMs: Number(dto.latencyMs.toFixed(2)),
-          maxLatencyMs: Math.round(dto.latencyMs),
+          maxLatencyMs: Math.max(
+            Math.round(dto.latencyMs),
+            dto.p95LatencyMs !== undefined ? Math.round(dto.p95LatencyMs) : 0,
+          ),
+          p95LatencyMs:
+            dto.p95LatencyMs !== undefined
+              ? Number(dto.p95LatencyMs.toFixed(2))
+              : null,
+          e2eAlertLatencyMs:
+            dto.e2eAlertLatencyMs !== undefined
+              ? Number(dto.e2eAlertLatencyMs.toFixed(2))
+              : null,
           totalFrames: frameCount,
         },
       });

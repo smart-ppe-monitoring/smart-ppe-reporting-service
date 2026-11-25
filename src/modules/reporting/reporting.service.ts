@@ -1,3 +1,4 @@
+import IORedis from "ioredis";
 import {
   ReportingRepository,
   ReportingCallOptions,
@@ -29,6 +30,8 @@ import {
   CreateAiModelDto,
   AiModelVersionDto,
   CreateAiModelVersionDto,
+  AiModelDeploySyncResultDto,
+  DeployedAiModelVersionDto,
   PaginatedResultDto,
   AggregatedReportDataDto,
 } from "./reporting.dto";
@@ -39,6 +42,8 @@ import { AppError } from "../../common/errors/app-error";
 import { ERROR_CODE } from "../../common/errors/error-code";
 import { ROLES } from "../../common/constants/role.constant";
 import {
+  AI_MODEL_DEPLOY_SYNC_CHANNEL,
+  AI_MODEL_DEPLOY_SYNC_STATUS,
   AI_MODEL_STATUS,
   REPORT_TEMPLATE_STATUS,
 } from "../../common/constants/reporting.constant";
@@ -46,8 +51,256 @@ import {
   AUDIT_ACTION,
   AUDIT_TARGET_TYPE,
 } from "../../common/constants/audit-log.constant";
+import { EVENT_NAMES } from "../../common/constants/event.constant";
+import { GATEWAY_HEADERS } from "../../common/constants/gateway.constant";
 import { envConfig } from "../../config/env.config";
 import { fetchInternalService } from "../../common/helpers/http-client.helper";
+
+export interface AiModelDeployEventPayload {
+  eventName: string;
+  modelId: string;
+  modelCode: string;
+  modelName: string;
+  modelType: string;
+  versionId: string;
+  version: string;
+  modelPath: string | null;
+  framework: string;
+  inputSize: string;
+  deployedAt: string;
+  actorId?: string;
+  requestId?: string;
+}
+
+export interface AiModelDeployNotifier {
+  notifyModelDeployed(
+    payload: AiModelDeployEventPayload,
+  ): Promise<AiModelDeploySyncResultDto>;
+}
+
+export interface DefaultAiModelDeployNotifierOptions {
+  serviceUrl?: string;
+  syncEnabled?: boolean;
+  timeoutMs?: number;
+  internalServiceToken?: string;
+  gatewayInternalSecret?: string;
+  httpClient?: typeof fetchInternalService;
+  redisPublisher?: (channel: string, message: string) => Promise<boolean>;
+  skipInTestEnv?: boolean;
+}
+
+function isRunningInTestEnvironment(): boolean {
+  return (
+    process.env.NODE_ENV === "test" ||
+    Boolean(process.env.NODE_TEST_CONTEXT) ||
+    process.argv.some((arg) => arg.includes("test"))
+  );
+}
+
+/**
+ * Đồng bộ sự kiện deploy model sang AI Service (HTTP M2M /api/live/sync và Redis Pub/Sub).
+ * Luôn fallback an toàn (không throw) để không làm gián đoạn quá trình cập nhật CSDL.
+ */
+export class DefaultAiModelDeployNotifier implements AiModelDeployNotifier {
+  private readonly serviceUrl: string;
+  private readonly syncEnabled: boolean;
+  private readonly timeoutMs: number;
+  private readonly internalServiceToken: string;
+  private readonly gatewayInternalSecret: string;
+  private readonly httpClient: typeof fetchInternalService;
+  private readonly redisPublisher?: (
+    channel: string,
+    message: string,
+  ) => Promise<boolean>;
+  private readonly skipInTestEnv: boolean;
+
+  constructor(options: DefaultAiModelDeployNotifierOptions = {}) {
+    this.serviceUrl = (
+      options.serviceUrl ?? envConfig.aiService.serviceUrl
+    ).replace(/\/+$/, "");
+    this.syncEnabled = options.syncEnabled ?? envConfig.aiService.syncEnabled;
+    this.timeoutMs = options.timeoutMs ?? envConfig.aiService.syncTimeoutMs;
+    this.internalServiceToken =
+      options.internalServiceToken ?? envConfig.internalService.token;
+    this.gatewayInternalSecret =
+      options.gatewayInternalSecret ?? envConfig.gateway.internalSecret;
+    this.httpClient = options.httpClient ?? fetchInternalService;
+    this.redisPublisher = options.redisPublisher;
+
+    const hasCustomTransport = Boolean(
+      options.httpClient || options.serviceUrl || options.redisPublisher,
+    );
+    this.skipInTestEnv =
+      options.skipInTestEnv ??
+      (!hasCustomTransport && isRunningInTestEnvironment());
+  }
+
+  private async publishRedisDeployEvent(
+    channel: string,
+    message: string,
+  ): Promise<boolean> {
+    if (this.redisPublisher) {
+      try {
+        return await this.redisPublisher(channel, message);
+      } catch {
+        return false;
+      }
+    }
+
+    if (!envConfig.redis.enabled || this.skipInTestEnv) {
+      return false;
+    }
+
+    const client = new IORedis({
+      host: envConfig.redis.host,
+      port: envConfig.redis.port,
+      password: envConfig.redis.password,
+      lazyConnect: true,
+      connectTimeout: Math.min(this.timeoutMs, 1500),
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+      retryStrategy: () => null,
+    });
+    client.on("error", () => {});
+
+    try {
+      await client.connect();
+      await client.publish(channel, message);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      try {
+        await client.quit();
+      } catch {
+        client.disconnect();
+      }
+    }
+  }
+
+  async notifyModelDeployed(
+    payload: AiModelDeployEventPayload,
+  ): Promise<AiModelDeploySyncResultDto> {
+    const syncedAt = new Date().toISOString();
+
+    if (!this.syncEnabled || this.skipInTestEnv) {
+      return {
+        status: AI_MODEL_DEPLOY_SYNC_STATUS.SKIPPED,
+        channel: AI_MODEL_DEPLOY_SYNC_CHANNEL.NONE,
+        synced: false,
+        eventName: payload.eventName,
+        syncedAt,
+        message: !this.syncEnabled
+          ? "AI runtime sync is disabled via AI_SERVICE_SYNC_ENABLED=false"
+          : "AI runtime sync skipped in test environment without custom transport",
+      };
+    }
+
+    const targetUrl = `${this.serviceUrl}/api/live/sync`;
+    const headers: Record<string, string> = {};
+    if (this.internalServiceToken) {
+      headers[GATEWAY_HEADERS.INTERNAL_SERVICE_TOKEN] =
+        this.internalServiceToken;
+      headers["Authorization"] = `Bearer ${this.internalServiceToken}`;
+    }
+    if (this.gatewayInternalSecret) {
+      headers[GATEWAY_HEADERS.INTERNAL_SECRET] = this.gatewayInternalSecret;
+    }
+    if (payload.requestId) {
+      headers[GATEWAY_HEADERS.REQUEST_ID] = payload.requestId;
+    }
+
+    const eventBody = {
+      trigger: payload.eventName,
+      modelId: payload.modelId,
+      modelCode: payload.modelCode,
+      modelName: payload.modelName,
+      modelType: payload.modelType,
+      versionId: payload.versionId,
+      version: payload.version,
+      modelPath: payload.modelPath,
+      framework: payload.framework,
+      inputSize: payload.inputSize,
+      deployedAt: payload.deployedAt,
+      actorId: payload.actorId,
+    };
+
+    const [httpRes, redisPublished] = await Promise.all([
+      this.httpClient(targetUrl, {
+        method: "POST",
+        headers,
+        body: eventBody,
+        timeoutMs: this.timeoutMs,
+      }).catch((err: any) => ({
+        ok: false,
+        status: 500,
+        error: err?.message || "HTTP sync failed",
+      })),
+      this.publishRedisDeployEvent(
+        payload.eventName,
+        JSON.stringify(eventBody),
+      ),
+    ]);
+
+    const httpOk = Boolean(httpRes.ok);
+    const httpStatus = typeof httpRes.status === "number" ? httpRes.status : null;
+
+    if (httpOk && redisPublished) {
+      return {
+        status: AI_MODEL_DEPLOY_SYNC_STATUS.SYNCED,
+        channel: AI_MODEL_DEPLOY_SYNC_CHANNEL.HTTP_AND_REDIS,
+        synced: true,
+        eventName: payload.eventName,
+        targetUrl,
+        httpStatus,
+        redisPublished: true,
+        syncedAt,
+        message:
+          "Synchronized deployed AI model to AI Service HTTP runtime and Redis channel",
+      };
+    }
+
+    if (httpOk) {
+      return {
+        status: AI_MODEL_DEPLOY_SYNC_STATUS.SYNCED,
+        channel: AI_MODEL_DEPLOY_SYNC_CHANNEL.HTTP,
+        synced: true,
+        eventName: payload.eventName,
+        targetUrl,
+        httpStatus,
+        redisPublished,
+        syncedAt,
+        message: "Synchronized deployed AI model to AI Service HTTP runtime",
+      };
+    }
+
+    if (redisPublished) {
+      return {
+        status: AI_MODEL_DEPLOY_SYNC_STATUS.EVENT_PUBLISHED,
+        channel: AI_MODEL_DEPLOY_SYNC_CHANNEL.REDIS,
+        synced: true,
+        eventName: payload.eventName,
+        targetUrl,
+        httpStatus,
+        redisPublished: true,
+        syncedAt,
+        message: `Published model deploy event via Redis fallback (${httpRes.error || `HTTP ${httpStatus}`})`,
+      };
+    }
+
+    return {
+      status: AI_MODEL_DEPLOY_SYNC_STATUS.FAILED,
+      channel: AI_MODEL_DEPLOY_SYNC_CHANNEL.NONE,
+      synced: false,
+      eventName: payload.eventName,
+      targetUrl,
+      httpStatus,
+      redisPublished: false,
+      syncedAt,
+      message: `AI runtime unreachable (${httpRes.error || `HTTP ${httpStatus}`}); version remains DEPLOYED in database`,
+    };
+  }
+}
 
 export interface AuditLogger {
   createAuditLog(data: {
@@ -94,13 +347,17 @@ export class DefaultReportingAuditLogger implements AuditLogger {
 export class ReportingService {
   private readonly repository: ReportingRepository;
   private readonly auditLogger?: AuditLogger;
+  private readonly aiModelDeployNotifier: AiModelDeployNotifier;
 
   constructor(
     repository?: ReportingRepository,
     auditLogger?: AuditLogger,
+    aiModelDeployNotifier?: AiModelDeployNotifier,
   ) {
     this.repository = repository || new ReportingRepository();
     this.auditLogger = auditLogger || new DefaultReportingAuditLogger();
+    this.aiModelDeployNotifier =
+      aiModelDeployNotifier || new DefaultAiModelDeployNotifier();
   }
 
   private async logAudit(data: {
@@ -930,8 +1187,13 @@ export class ReportingService {
   async deployAiModelVersion(
     modelId: string,
     versionId: string,
-    context?: { actorId?: string; ipAddress?: string; userAgent?: string },
-  ): Promise<AiModelVersionDto> {
+    context?: {
+      actorId?: string;
+      ipAddress?: string;
+      userAgent?: string;
+      requestId?: string;
+    },
+  ): Promise<DeployedAiModelVersionDto> {
     const model = await this.repository.findAiModelById(modelId);
     if (!model) {
       throw new AppError(
@@ -963,17 +1225,55 @@ export class ReportingService {
       versionId,
     );
 
+    let aiRuntimeSync: AiModelDeploySyncResultDto;
+    try {
+      aiRuntimeSync = await this.aiModelDeployNotifier.notifyModelDeployed({
+        eventName: EVENT_NAMES.PPE_AI_MODEL_DEPLOYED,
+        modelId: model.id,
+        modelCode: model.code,
+        modelName: model.name,
+        modelType: model.modelType,
+        versionId: deployed.id,
+        version: deployed.version,
+        modelPath: deployed.modelPath ?? null,
+        framework: deployed.framework,
+        inputSize: deployed.inputSize,
+        deployedAt: deployed.deployedAt ?? new Date().toISOString(),
+        actorId: context?.actorId,
+        requestId: context?.requestId,
+      });
+    } catch (syncError: any) {
+      aiRuntimeSync = {
+        status: AI_MODEL_DEPLOY_SYNC_STATUS.FAILED,
+        channel: AI_MODEL_DEPLOY_SYNC_CHANNEL.NONE,
+        synced: false,
+        eventName: EVENT_NAMES.PPE_AI_MODEL_DEPLOYED,
+        syncedAt: new Date().toISOString(),
+        message:
+          syncError?.message ||
+          "Unexpected AI runtime sync error; version remains DEPLOYED in database",
+      };
+    }
+
     await this.logAudit({
       actorId: context?.actorId,
       action: AUDIT_ACTION.DEPLOY_AI_MODEL_VERSION,
       targetType: AUDIT_TARGET_TYPE.PPE_AI_MODEL,
       targetId: deployed.id,
-      details: { modelId, version: deployed.version },
+      details: {
+        modelId,
+        version: deployed.version,
+        modelPath: deployed.modelPath ?? null,
+        aiRuntimeSync,
+      },
       ipAddress: context?.ipAddress,
       userAgent: context?.userAgent,
     });
 
-    return deployed;
+    return {
+      ...deployed,
+      aiRuntimeSync,
+    };
   }
 
   async getAiModelVersionById(versionId: string): Promise<AiModelVersionDto> {

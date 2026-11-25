@@ -310,7 +310,7 @@ export class ExcelReportEngine {
         views: [{ showGridLines: true }],
       });
 
-      wsAi.mergeCells("A1:G1");
+      wsAi.mergeCells("A1:I1");
       const aiTitle = wsAi.getCell("A1");
       aiTitle.value = "THỐNG KÊ HIỆU NĂNG SUY LUẬN MÔ HÌNH AI (YOLO)";
       aiTitle.font = { name: "Arial", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
@@ -330,6 +330,8 @@ export class ExcelReportEngine {
         "Độ trễ TB (ms)",
         "Độ trễ tối đa (ms)",
         "Tổng frames suy luận",
+        "Độ trễ P95 (ms)",
+        "Độ trễ cảnh báo E2E (ms)",
       ];
 
       const aiHeaderRow = wsAi.getRow(3);
@@ -361,8 +363,12 @@ export class ExcelReportEngine {
         row.getCell(6).alignment = { horizontal: "right" };
         row.getCell(7).value = ai.totalFrames;
         row.getCell(7).alignment = { horizontal: "right" };
+        row.getCell(8).value = ai.p95LatencyMs ?? null;
+        row.getCell(8).alignment = { horizontal: "right" };
+        row.getCell(9).value = ai.e2eAlertLatencyMs ?? null;
+        row.getCell(9).alignment = { horizontal: "right" };
 
-        for (let c = 1; c <= 7; c++) {
+        for (let c = 1; c <= 9; c++) {
           row.getCell(c).border = {
             top: { style: "thin", color: { argb: "FFE0E0E0" } },
             bottom: { style: "thin", color: { argb: "FFE0E0E0" } },

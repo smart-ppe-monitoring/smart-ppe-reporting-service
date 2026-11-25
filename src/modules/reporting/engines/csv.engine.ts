@@ -257,6 +257,8 @@ export class CsvReportEngine {
           "Độ trễ TB (ms)",
           "Độ trễ tối đa (ms)",
           "Tổng frames suy luận",
+          "Độ trễ P95 (ms)",
+          "Độ trễ cảnh báo E2E (ms)",
         ]),
       );
       data.aiPerformance.forEach((ai, idx) => {
@@ -269,6 +271,8 @@ export class CsvReportEngine {
             ai.avgLatencyMs,
             ai.maxLatencyMs,
             ai.totalFrames,
+            ai.p95LatencyMs ?? "",
+            ai.e2eAlertLatencyMs ?? "",
           ]),
         );
       });

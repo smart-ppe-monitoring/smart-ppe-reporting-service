@@ -86,10 +86,12 @@ model AiPerformanceStatistic {
   cameraId       String   @map("camera_id") @db.Uuid
   modelVersionId String?  @map("model_version_id") @db.Uuid
   statDate       DateTime @map("stat_date") @db.Date
-  avgFps         Decimal  @default(0) @map("avg_fps") @db.Decimal(6, 2)
-  avgLatencyMs   Decimal  @default(0) @map("avg_latency_ms") @db.Decimal(10, 2)
-  maxLatencyMs   Int      @default(0) @map("max_latency_ms")
-  totalFrames    BigInt   @default(0) @map("total_frames")
+  avgFps            Decimal  @default(0) @map("avg_fps") @db.Decimal(6, 2)
+  avgLatencyMs      Decimal  @default(0) @map("avg_latency_ms") @db.Decimal(10, 2)
+  maxLatencyMs      Int      @default(0) @map("max_latency_ms")
+  p95LatencyMs      Decimal? @map("p95_latency_ms") @db.Decimal(10, 2)
+  e2eAlertLatencyMs Decimal? @map("e2e_alert_latency_ms") @db.Decimal(10, 2)
+  totalFrames       BigInt   @default(0) @map("total_frames")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 

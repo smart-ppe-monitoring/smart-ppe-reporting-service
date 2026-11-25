@@ -36,6 +36,14 @@ const controller = new ReportingController();
 
 // ── 1. Statistics & Dashboard Routes (/api/v1/statistics) ────────────────────
 
+// Internal M2M endpoint cho smart-ppe-ai-service đẩy telemetry định kỳ (phải đặt trước authMiddleware)
+statisticRouter.post(
+  "/internal/record-ai-performance",
+  requireInternalServiceToken,
+  validate(recordAiPerformanceSchema, "body"),
+  controller.recordAiPerformance,
+);
+
 statisticRouter.use(authMiddleware);
 
 statisticRouter.get(

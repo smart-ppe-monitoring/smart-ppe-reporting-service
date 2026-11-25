@@ -4,6 +4,7 @@ import {
   REPORT_STATUS,
   REPORT_FILE_TYPE,
   AI_MODEL_TYPE,
+  AI_TELEMETRY_LIMITS,
   STATISTIC_GROUP_BY,
 } from "../../common/constants/reporting.constant";
 
@@ -240,16 +241,37 @@ export const recordAiPerformanceSchema = z.object({
   fps: z.coerce
     .number()
     .positive("FPS must be positive")
-    .max(240, "FPS cannot exceed 240"),
+    .max(AI_TELEMETRY_LIMITS.MAX_FPS, "FPS cannot exceed 240"),
   latencyMs: z.coerce
     .number()
     .positive("Latency must be positive")
-    .max(10000, "Latency cannot exceed 10,000ms"),
+    .max(AI_TELEMETRY_LIMITS.MAX_LATENCY_MS, "Latency cannot exceed 10,000ms"),
+  p95LatencyMs: z.coerce
+    .number()
+    .finite("p95LatencyMs must be a finite number")
+    .min(0, "p95LatencyMs must be non-negative")
+    .max(
+      AI_TELEMETRY_LIMITS.MAX_P95_LATENCY_MS,
+      "p95LatencyMs cannot exceed 60,000ms",
+    )
+    .optional(),
+  e2eAlertLatencyMs: z.coerce
+    .number()
+    .finite("e2eAlertLatencyMs must be a finite number")
+    .min(0, "e2eAlertLatencyMs must be non-negative")
+    .max(
+      AI_TELEMETRY_LIMITS.MAX_E2E_ALERT_LATENCY_MS,
+      "e2eAlertLatencyMs cannot exceed 60,000ms",
+    )
+    .optional(),
   frameCount: z.coerce
     .number()
     .int()
     .positive("frameCount must be positive integer")
-    .max(1_000_000, "frameCount cannot exceed 1,000,000 per report")
+    .max(
+      AI_TELEMETRY_LIMITS.MAX_FRAME_COUNT,
+      "frameCount cannot exceed 1,000,000 per report",
+    )
     .default(1),
 });
 

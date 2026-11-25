@@ -140,6 +140,11 @@ const envSchema = z
     REPORTING_SERVICE_STANDALONE: z.string().default("false"),
     REPORTING_SERVICE_URL: z.string().default("http://localhost:8894"),
 
+    // ── AI Inference Service (:8000) ─────────────────────────────────────────
+    AI_SERVICE_URL: z.string().default("http://localhost:8000"),
+    AI_SERVICE_SYNC_ENABLED: z.string().default("true"),
+    AI_SERVICE_SYNC_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
+
 
 
     // ── Webhook ───────────────────────────────────────────────────────────────
@@ -490,6 +495,11 @@ export const envConfig = {
     port: _env.REPORTING_PORT,
     standalone: _env.REPORTING_SERVICE_STANDALONE === "true",
     serviceUrl: _env.REPORTING_SERVICE_URL,
+  },
+  aiService: {
+    serviceUrl: _env.AI_SERVICE_URL,
+    syncEnabled: _env.AI_SERVICE_SYNC_ENABLED !== "false",
+    syncTimeoutMs: _env.AI_SERVICE_SYNC_TIMEOUT_MS,
   },
   minio: {
     endpoint: _env.PPE_MINIO_ENDPOINT,

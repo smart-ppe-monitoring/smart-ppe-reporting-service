@@ -66,6 +66,34 @@ export const AI_MODEL_VERSION_STATUS = {
 export type AiModelVersionStatus =
   (typeof AI_MODEL_VERSION_STATUS)[keyof typeof AI_MODEL_VERSION_STATUS];
 
+export const AI_TELEMETRY_LIMITS = {
+  MAX_FPS: 240,
+  MAX_LATENCY_MS: 10_000,
+  MAX_P95_LATENCY_MS: 60_000,
+  MAX_E2E_ALERT_LATENCY_MS: 60_000,
+  MAX_FRAME_COUNT: 1_000_000,
+} as const;
+
+export const AI_MODEL_DEPLOY_SYNC_STATUS = {
+  SYNCED: "SYNCED",
+  EVENT_PUBLISHED: "EVENT_PUBLISHED",
+  FAILED: "FAILED",
+  SKIPPED: "SKIPPED",
+} as const;
+
+export type AiModelDeploySyncStatus =
+  (typeof AI_MODEL_DEPLOY_SYNC_STATUS)[keyof typeof AI_MODEL_DEPLOY_SYNC_STATUS];
+
+export const AI_MODEL_DEPLOY_SYNC_CHANNEL = {
+  HTTP_AND_REDIS: "HTTP_AND_REDIS",
+  HTTP: "HTTP",
+  REDIS: "REDIS",
+  NONE: "NONE",
+} as const;
+
+export type AiModelDeploySyncChannel =
+  (typeof AI_MODEL_DEPLOY_SYNC_CHANNEL)[keyof typeof AI_MODEL_DEPLOY_SYNC_CHANNEL];
+
 export const STATISTIC_GROUP_BY = {
   DAY: "DAY",
   WEEK: "WEEK",

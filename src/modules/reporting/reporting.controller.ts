@@ -495,6 +495,7 @@ export class ReportingController {
           actorId: req.user?.id,
           ipAddress: req.ip,
           userAgent: req.get("user-agent"),
+          requestId: req.id || (req.headers?.["x-request-id"] as string),
         },
       );
       return res.status(200).json({

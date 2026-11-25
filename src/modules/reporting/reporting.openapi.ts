@@ -315,7 +315,8 @@ export function registerReportingOpenApi(): void {
     method: "get",
     path: "/statistics/ai-performance",
     tags: ["Reporting & Statistics"],
-    summary: "Lấy dữ liệu hiệu năng hệ thống AI (FPS, độ trễ suy luận, tổng số frame)",
+    summary:
+      "Lấy dữ liệu hiệu năng hệ thống AI (FPS, độ trễ TB/P95/tối đa, độ trễ cảnh báo E2E, tổng số frame)",
     security: [{ BearerAuth: [] }],
     request: { query: aiPerformanceFilterSchema },
     responses: {
@@ -334,6 +335,11 @@ export function registerReportingOpenApi(): void {
                   avgFps: z.number().openapi({ example: 28.5 }),
                   avgLatencyMs: z.number().openapi({ example: 35.2 }),
                   maxLatencyMs: z.number().openapi({ example: 68 }),
+                  p95LatencyMs: z.number().nullable().openapi({ example: 54.8 }),
+                  e2eAlertLatencyMs: z
+                    .number()
+                    .nullable()
+                    .openapi({ example: 420.5 }),
                   totalFrames: z.string().openapi({ example: "1250000" }),
                 }),
               ),
@@ -348,7 +354,8 @@ export function registerReportingOpenApi(): void {
     method: "post",
     path: "/statistics/record-ai-performance",
     tags: ["Reporting & Statistics"],
-    summary: "Ghi nhận telemetry hiệu năng suy luận AI từ video streaming pipeline",
+    summary:
+      "Ghi nhận telemetry hiệu năng suy luận AI (User JWT với quyền PPE_MODEL_MANAGE)",
     security: [{ BearerAuth: [] }],
     request: {
       body: {
@@ -360,6 +367,46 @@ export function registerReportingOpenApi(): void {
     responses: {
       201: {
         description: "Ghi nhận telemetry AI thành công",
+      },
+    },
+  });
+
+  openapiRegistry.registerPath({
+    method: "post",
+    path: "/statistics/internal/record-ai-performance",
+    tags: ["Reporting & Statistics"],
+    summary:
+      "Endpoint nội bộ M2M nhận telemetry hiệu năng định kỳ từ smart-ppe-ai-service",
+    description:
+      "Bảo vệ bởi requireInternalServiceToken (header x-internal-service-token hoặc Bearer INTERNAL_SERVICE_TOKEN). Không yêu cầu User JWT.",
+    request: {
+      headers: z.object({
+        "x-internal-service-token": z
+          .string()
+          .optional()
+          .openapi({ example: "internal-service-token" }),
+      }),
+      body: {
+        content: {
+          "application/json": { schema: recordAiPerformanceSchema },
+        },
+      },
+    },
+    responses: {
+      201: {
+        description: "Ghi nhận telemetry AI nội bộ thành công",
+      },
+      401: {
+        description: "Thiếu token xác thực nội bộ",
+      },
+      403: {
+        description: "Token xác thực nội bộ không hợp lệ",
+      },
+      404: {
+        description: "Không tìm thấy phiên bản mô hình AI",
+      },
+      503: {
+        description: "Chưa cấu hình INTERNAL_SERVICE_TOKEN trên server",
       },
     },
   });
@@ -629,12 +676,55 @@ export function registerReportingOpenApi(): void {
     method: "patch",
     path: "/ai-models/{id}/versions/{versionId}/deploy",
     tags: ["AI Models"],
-    summary: "Triển khai (DEPLOYED) phiên bản mô hình AI cho hệ thống suy luận",
+    summary:
+      "Triển khai (DEPLOYED) phiên bản mô hình AI và đồng bộ sự kiện sang AI Runtime Service",
     security: [{ BearerAuth: [] }],
     request: { params: modelVersionParamSchema },
     responses: {
       200: {
-        description: "Triển khai phiên bản mô hình thành công",
+        description:
+          "Triển khai phiên bản mô hình thành công kèm trạng thái đồng bộ AI Runtime (aiRuntimeSync)",
+        content: {
+          "application/json": {
+            schema: z.object({
+              success: z.boolean().openapi({ example: true }),
+              message: z.string().openapi({
+                example: "AI Model version deployed successfully",
+              }),
+              data: z.object({
+                id: z.string().uuid(),
+                modelId: z.string().uuid(),
+                version: z.string().openapi({ example: "2.0.0" }),
+                modelPath: z.string().nullable(),
+                framework: z.string().openapi({ example: "PyTorch" }),
+                inputSize: z.string().openapi({ example: "640x640" }),
+                status: z.string().openapi({ example: "DEPLOYED" }),
+                deployedAt: z.string().nullable(),
+                createdAt: z.string(),
+                aiRuntimeSync: z.object({
+                  status: z
+                    .enum(["SYNCED", "EVENT_PUBLISHED", "FAILED", "SKIPPED"])
+                    .openapi({ example: "SYNCED" }),
+                  channel: z
+                    .enum(["HTTP_AND_REDIS", "HTTP", "REDIS", "NONE"])
+                    .openapi({ example: "HTTP" }),
+                  synced: z.boolean().openapi({ example: true }),
+                  eventName: z
+                    .string()
+                    .openapi({ example: "ppe.ai_model.deployed" }),
+                  targetUrl: z
+                    .string()
+                    .optional()
+                    .openapi({ example: "http://localhost:8000/api/live/sync" }),
+                  httpStatus: z.number().nullable().optional(),
+                  redisPublished: z.boolean().optional(),
+                  syncedAt: z.string(),
+                  message: z.string(),
+                }),
+              }),
+            }),
+          },
+        },
       },
     },
   });

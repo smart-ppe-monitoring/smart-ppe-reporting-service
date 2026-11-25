@@ -6,6 +6,8 @@ import {
   AiModelType,
   AiModelStatus,
   AiModelVersionStatus,
+  AiModelDeploySyncStatus,
+  AiModelDeploySyncChannel,
   StatisticGroupBy,
 } from "../../common/constants/reporting.constant";
 import { PaginationMeta } from "../../common/types/pagination.type";
@@ -178,6 +180,8 @@ export interface AiPerformanceStatDto {
   avgFps: number;
   avgLatencyMs: number;
   maxLatencyMs: number;
+  p95LatencyMs?: number | null;
+  e2eAlertLatencyMs?: number | null;
   totalFrames: string;
 }
 
@@ -187,6 +191,8 @@ export interface RecordAiPerformanceDto {
   statDate?: string;
   fps: number;
   latencyMs: number;
+  p95LatencyMs?: number;
+  e2eAlertLatencyMs?: number;
   frameCount?: number;
 }
 
@@ -288,6 +294,22 @@ export interface AiModelVersionDto {
   metrics?: Record<string, any> | null;
   deployedAt?: string | null;
   createdAt: string;
+}
+
+export interface AiModelDeploySyncResultDto {
+  status: AiModelDeploySyncStatus;
+  channel: AiModelDeploySyncChannel;
+  synced: boolean;
+  eventName: string;
+  targetUrl?: string;
+  httpStatus?: number | null;
+  redisPublished?: boolean;
+  syncedAt: string;
+  message: string;
+}
+
+export interface DeployedAiModelVersionDto extends AiModelVersionDto {
+  aiRuntimeSync: AiModelDeploySyncResultDto;
 }
 
 export interface CreateAiModelVersionDto {
