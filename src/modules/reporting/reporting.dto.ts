@@ -251,6 +251,7 @@ export interface ReportHistoryQueryDto {
   page?: number;
   limit?: number;
   siteId?: string;
+  siteIds?: string[];
   reportType?: string;
   status?: string;
 }

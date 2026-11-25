@@ -49,6 +49,18 @@ export class ReportingController {
     };
   }
 
+  private extractUserSiteIds(req: {
+    user?: { siteIds?: string[]; siteId?: string };
+  }): string[] | undefined {
+    if (!req.user) return undefined;
+    const siteIds = Array.isArray(req.user.siteIds) ? req.user.siteIds : [];
+    const combined = [
+      ...siteIds,
+      ...(req.user.siteId ? [req.user.siteId] : []),
+    ].filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+    return Array.from(new Set(combined));
+  }
+
   // ── 1. Statistics & Dashboard Endpoints ─────────────────────────────────────
 
   getDashboardKpi = async (
@@ -355,6 +367,7 @@ export class ReportingController {
         req.params.id,
         req.user?.id,
         req.user?.role,
+        this.extractUserSiteIds(req),
       );
       return res.status(200).json({
         success: true,
@@ -376,6 +389,7 @@ export class ReportingController {
         req.user?.id,
         req.user?.role,
         this.extractCallOptions(req),
+        this.extractUserSiteIds(req),
       );
       res.setHeader("Content-Type", file.contentType);
       res.setHeader(

@@ -487,13 +487,19 @@ export function registerReportingOpenApi(): void {
     method: "get",
     path: "/reports/{id}/download",
     tags: ["Reports"],
-    summary: "Tải file báo cáo đã xuất",
+    summary: "Lấy thông tin tải báo cáo đã xuất (hỗ trợ Viewer theo Site Tenancy)",
+    description:
+      "Trả về metadata và đường dẫn tải nội dung báo cáo. Yêu cầu quyền PPE_REPORTING_READ hoặc PPE_REPORTING_EXPORT và tuân thủ phạm vi công trường (siteIds).",
     security: [{ BearerAuth: [] }],
     request: { params: uuidParamSchema },
     responses: {
       200: {
         description: "Thông tin tải báo cáo thành công",
       },
+      403: {
+        description: "Không có quyền đọc/tải báo cáo thuộc công trường này",
+      },
+      404: { description: "Không tìm thấy báo cáo" },
     },
   });
 
@@ -501,13 +507,20 @@ export function registerReportingOpenApi(): void {
     method: "get",
     path: "/reports/{id}/content",
     tags: ["Reports"],
-    summary: "Tải trực tiếp nội dung tệp tin báo cáo đã xuất (PDF/Excel)",
+    summary:
+      "Tải trực tiếp nội dung tệp tin báo cáo đã xuất (PDF/Excel/CSV/JSON)",
+    description:
+      "Kết xuất và trả về tệp báo cáo đầy đủ số liệu (PDF, Excel, CSV UTF-8 BOM, JSON). Yêu cầu quyền PPE_REPORTING_READ hoặc PPE_REPORTING_EXPORT và tuân thủ phạm vi công trường (siteIds).",
     security: [{ BearerAuth: [] }],
     request: { params: uuidParamSchema },
     responses: {
       200: {
         description: "Tải tệp tin báo cáo thành công",
       },
+      403: {
+        description: "Không có quyền đọc/tải báo cáo thuộc công trường này",
+      },
+      404: { description: "Không tìm thấy báo cáo" },
     },
   });
 

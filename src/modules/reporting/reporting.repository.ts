@@ -1579,6 +1579,8 @@ export class ReportingRepository {
     const where: any = {};
     if (query.siteId) {
       where.siteId = query.siteId;
+    } else if (Array.isArray(query.siteIds) && query.siteIds.length > 0) {
+      where.siteId = { in: query.siteIds };
     }
     if (query.reportType) {
       where.reportType = query.reportType;

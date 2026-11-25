@@ -3,7 +3,10 @@ import { ReportingController } from "./reporting.controller";
 import { validate } from "../../middlewares/validate.middleware";
 import { authMiddleware } from "../../middlewares/auth.middleware";
 import { requireInternalServiceToken } from "../../middlewares/internal-auth.middleware";
-import { requirePermission } from "../../middlewares/permission.middleware";
+import {
+  requirePermission,
+  requireAnyPermission,
+} from "../../middlewares/permission.middleware";
 import { PERMISSIONS } from "../../common/constants/permission.constant";
 import {
   dashboardFilterSchema,
@@ -145,14 +148,20 @@ reportRouter.get(
 
 reportRouter.get(
   "/:id/download",
-  requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),
+  requireAnyPermission(
+    PERMISSIONS.PPE_REPORTING_READ,
+    PERMISSIONS.PPE_REPORTING_EXPORT,
+  ),
   validate(uuidParamSchema, "params"),
   controller.getReportGenerationDownload,
 );
 
 reportRouter.get(
   "/:id/content",
-  requirePermission(PERMISSIONS.PPE_REPORTING_EXPORT),
+  requireAnyPermission(
+    PERMISSIONS.PPE_REPORTING_READ,
+    PERMISSIONS.PPE_REPORTING_EXPORT,
+  ),
   validate(uuidParamSchema, "params"),
   controller.getReportGenerationContent,
 );

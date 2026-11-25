@@ -34,6 +34,7 @@ import {
 } from "./reporting.dto";
 import { ExcelReportEngine } from "./engines/excel.engine";
 import { PdfReportEngine } from "./engines/pdf.engine";
+import { CsvReportEngine } from "./engines/csv.engine";
 import { AppError } from "../../common/errors/app-error";
 import { ERROR_CODE } from "../../common/errors/error-code";
 import { ROLES } from "../../common/constants/role.constant";
@@ -579,13 +580,67 @@ export class ReportingService {
     return generated;
   }
 
+  private getPermittedSites(user?: {
+    siteIds?: string[];
+    siteId?: string;
+  }): string[] {
+    if (!user) return [];
+    const combined = [
+      ...(Array.isArray(user.siteIds) ? user.siteIds : []),
+      ...(user.siteId ? [user.siteId] : []),
+    ].filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+    return Array.from(new Set(combined));
+  }
+
+  private assertCanAccessReportGeneration(
+    report: ReportGenerationDto,
+    userId?: string,
+    userRole?: string,
+    userSiteIds?: string[],
+  ): void {
+    if (userRole === ROLES.ADMIN) {
+      return;
+    }
+
+    const permittedSites = Array.isArray(userSiteIds)
+      ? Array.from(
+          new Set(
+            userSiteIds.filter(
+              (id): id is string => typeof id === "string" && id.trim().length > 0,
+            ),
+          ),
+        )
+      : [];
+
+    if (permittedSites.length > 0) {
+      if (!permittedSites.includes(report.siteId)) {
+        throw new AppError(
+          "Bạn không có quyền tải xuống báo cáo này",
+          403,
+          ERROR_CODE.FORBIDDEN,
+        );
+      }
+      return;
+    }
+
+    if (userRole !== ROLES.ADMIN && (!userId || report.generatedBy !== userId)) {
+      throw new AppError(
+        "Bạn không có quyền tải xuống báo cáo này",
+        403,
+        ERROR_CODE.FORBIDDEN,
+      );
+    }
+  }
+
   async listReportGenerations(
     query: ReportHistoryQueryDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
   ): Promise<PaginatedResultDto<ReportGenerationDto>> {
-    const scopedQuery = { ...query };
+    const scopedQuery: ReportHistoryQueryDto = { ...query };
+    delete scopedQuery.siteIds;
+
     if (user && user.role !== ROLES.ADMIN) {
-      const permittedSites = user.siteIds || (user.siteId ? [user.siteId] : []);
+      const permittedSites = this.getPermittedSites(user);
       if (permittedSites.length > 0) {
         if (scopedQuery.siteId && !permittedSites.includes(scopedQuery.siteId)) {
           throw new AppError(
@@ -595,7 +650,7 @@ export class ReportingService {
           );
         }
         if (!scopedQuery.siteId) {
-          scopedQuery.siteId = permittedSites[0];
+          scopedQuery.siteIds = permittedSites;
         }
       }
     }
@@ -606,6 +661,7 @@ export class ReportingService {
     id: string,
     userId?: string,
     userRole?: string,
+    userSiteIds?: string[],
   ) {
     const report = await this.repository.findReportGenerationById(id);
     if (!report) {
@@ -616,14 +672,8 @@ export class ReportingService {
       );
     }
 
-    // BOLA Guard: Chỉ tác giả tạo báo cáo hoặc Quản trị viên mới được tải xuống
-    if (userRole !== ROLES.ADMIN && (!userId || report.generatedBy !== userId)) {
-      throw new AppError(
-        "Bạn không có quyền tải xuống báo cáo này",
-        403,
-        ERROR_CODE.FORBIDDEN,
-      );
-    }
+    // Site Tenancy BOLA Guard: Cho phép Admin hoặc nhân sự thuộc siteId của báo cáo (fallback tác giả nếu chưa gắn scope)
+    this.assertCanAccessReportGeneration(report, userId, userRole, userSiteIds);
 
     const { contentType, extension } = this.resolveMimeTypeAndExt(
       report.template?.fileType,
@@ -643,6 +693,7 @@ export class ReportingService {
     userId?: string,
     userRole?: string,
     callOptions?: ReportingCallOptions,
+    userSiteIds?: string[],
   ): Promise<{ content: Buffer; contentType: string; fileName: string }> {
     const report = await this.repository.findReportGenerationById(id);
     if (!report) {
@@ -653,14 +704,8 @@ export class ReportingService {
       );
     }
 
-    // BOLA Guard: Chỉ tác giả tạo báo cáo hoặc Quản trị viên mới được tải xuống
-    if (userRole !== ROLES.ADMIN && (!userId || report.generatedBy !== userId)) {
-      throw new AppError(
-        "Bạn không có quyền tải xuống báo cáo này",
-        403,
-        ERROR_CODE.FORBIDDEN,
-      );
-    }
+    // Site Tenancy BOLA Guard: Cho phép Admin hoặc nhân sự thuộc siteId của báo cáo (fallback tác giả nếu chưa gắn scope)
+    this.assertCanAccessReportGeneration(report, userId, userRole, userSiteIds);
 
     const { contentType, extension } = this.resolveMimeTypeAndExt(
       report.template?.fileType,
@@ -735,7 +780,7 @@ export class ReportingService {
         2,
       );
     } else if (extension === "csv") {
-      reportContent = `reportId,reportType,siteId,periodStart,periodEnd,generatedBy,generatedAt\n"${report.id}","${report.reportType}","${report.siteId}","${report.periodStart}","${report.periodEnd}","${report.generatedBy}","${report.generatedAt}"\n`;
+      reportContent = CsvReportEngine.generate(data);
     } else {
       reportContent = await PdfReportEngine.generate(data);
     }
