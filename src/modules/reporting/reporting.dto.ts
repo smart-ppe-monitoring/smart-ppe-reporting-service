@@ -65,6 +65,8 @@ export interface ShiftRiskSummaryDto {
 
 export interface HourlyRiskResponseDto {
   date: string;
+  startDate?: string;
+  endDate?: string;
   siteId?: string;
   hourly: HourlyRiskItemDto[];
   shifts: {
@@ -109,9 +111,7 @@ export interface DashboardKpiDto {
   activeModel: ActiveModelSummaryDto;
 }
 
-export interface DashboardKpiFilterDto {
-  siteId?: string;
-}
+export interface DashboardKpiFilterDto extends DashboardFilterDto {}
 
 export interface SeverityBreakdownItemDto {
   count: number;

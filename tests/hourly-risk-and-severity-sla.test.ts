@@ -209,6 +209,41 @@ describe("Hourly Risk & Severity SLA Suite", () => {
       assert.equal(result.shifts.afternoon.totalIncidents, 0);
       assert.equal(result.shifts.night.totalIncidents, 0);
     });
+
+    it("should aggregate hourly risk across multi-day [startDate, endDate] ranges in UTC+7", async () => {
+      const repo = new ReportingRepository();
+      const siteId = "019313a4-23b4-7890-8123-456789abcdef";
+      let capturedFilter: any;
+
+      (repo as any).fetchRealtimeIncidentsFromIncidentService = async (filter: any) => {
+        capturedFilter = filter;
+        return [
+          { id: "d1", detectedAt: "2026-11-01T01:00:00.000Z", severity: "HIGH" }, // 08:00 VN Day 1
+          { id: "d2", detectedAt: "2026-11-03T01:15:00.000Z", severity: "CRITICAL" }, // 08:15 VN Day 3
+          { id: "d3", detectedAt: "2026-11-07T09:00:00.000Z", severity: "MEDIUM" }, // 16:00 VN Day 7
+        ];
+      };
+
+      const result = await repo.getHourlyRisk({
+        siteId,
+        startDate: "2026-11-01",
+        endDate: "2026-11-07",
+      });
+
+      assert.equal(capturedFilter.siteId, siteId);
+      assert.ok(capturedFilter.startDate.includes("2026-10-31T17:00:00"));
+      assert.ok(capturedFilter.endDate.includes("2026-11-07T16:59:59"));
+
+      assert.equal(result.date, "2026-11-01..2026-11-07");
+      assert.equal(result.startDate, "2026-11-01");
+      assert.equal(result.endDate, "2026-11-07");
+      assert.equal(result.summary.totalIncidents, 3);
+      assert.equal(result.hourly[8].count, 2);
+      assert.equal(result.hourly[8].riskLevel, "CRITICAL");
+      assert.equal(result.hourly[16].count, 1);
+      assert.equal(result.shifts.morning.totalIncidents, 2);
+      assert.equal(result.shifts.afternoon.totalIncidents, 1);
+    });
   });
 
   describe("3. Validation Schema", () => {
@@ -228,12 +263,32 @@ describe("Hourly Risk & Severity SLA Suite", () => {
       assert.ok(valid.success);
     });
 
-    it("should reject mismatching startDate and endDate (multi-day) in hourlyRiskFilterSchema", () => {
-      const invalid = hourlyRiskFilterSchema.safeParse({
-        startDate: "2026-11-10",
-        endDate: "2026-11-15",
+    it("should accept multi-day startDate and endDate up to 90 days in hourlyRiskFilterSchema", () => {
+      const validMultiDay = hourlyRiskFilterSchema.safeParse({
+        startDate: "2026-11-01",
+        endDate: "2026-11-30",
       });
-      assert.ok(!invalid.success);
+      assert.ok(validMultiDay.success);
+
+      const valid90Days = hourlyRiskFilterSchema.safeParse({
+        startDate: "2026-01-01",
+        endDate: "2026-03-31",
+      });
+      assert.ok(valid90Days.success);
+    });
+
+    it("should reject reversed date range (startDate > endDate) and ranges exceeding 90 days in hourlyRiskFilterSchema", () => {
+      const reversed = hourlyRiskFilterSchema.safeParse({
+        startDate: "2026-11-15",
+        endDate: "2026-11-10",
+      });
+      assert.ok(!reversed.success);
+
+      const over90Days = hourlyRiskFilterSchema.safeParse({
+        startDate: "2026-01-01",
+        endDate: "2026-05-01",
+      });
+      assert.ok(!over90Days.success);
     });
 
     it("should reject invalid date format in hourlyRiskFilterSchema", () => {

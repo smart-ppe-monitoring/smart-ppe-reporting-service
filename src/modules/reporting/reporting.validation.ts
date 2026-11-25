@@ -26,9 +26,37 @@ export function isDateRangeWithinDays(
 
 // ── 1. Statistics & KPI Filter Schemas ────────────────────────────────────────
 
-export const dashboardKpiFilterSchema = z.object({
-  siteId: z.string().uuid("Invalid siteId UUID format").optional(),
-});
+export const dashboardKpiFilterSchema = z
+  .object({
+    siteId: z.string().uuid("Invalid siteId UUID format").optional(),
+    startDate: z
+      .string()
+      .regex(dateRegex, "startDate must be in YYYY-MM-DD format")
+      .optional(),
+    endDate: z
+      .string()
+      .regex(dateRegex, "endDate must be in YYYY-MM-DD format")
+      .optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.startDate && data.endDate) {
+        return data.startDate <= data.endDate;
+      }
+      return true;
+    },
+    {
+      message: "endDate must be equal to or greater than startDate",
+      path: ["endDate"],
+    },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
+      path: ["endDate"],
+    },
+  );
 
 export const hourlyRiskFilterSchema = z
   .object({
@@ -49,13 +77,19 @@ export const hourlyRiskFilterSchema = z
   .refine(
     (data) => {
       if (data.startDate && data.endDate) {
-        return data.startDate === data.endDate;
+        return data.startDate <= data.endDate;
       }
       return true;
     },
     {
-      message:
-        "Phân tích rủi ro theo 24 giờ chỉ hỗ trợ truy vấn trong 1 ngày duy nhất (startDate và endDate phải trùng nhau)",
+      message: "endDate must be equal to or greater than startDate",
+      path: ["endDate"],
+    },
+  )
+  .refine(
+    (data) => isDateRangeWithinDays(data.startDate, data.endDate),
+    {
+      message: "Khoảng thời gian thống kê không được vượt quá 90 ngày",
       path: ["endDate"],
     },
   );

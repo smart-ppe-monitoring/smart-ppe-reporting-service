@@ -57,13 +57,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const authHeader = this.extractAuthHeader(req);
-      const requestId =
-        (req as any).id || (req.headers["x-request-id"] as string);
       const kpis = await this.service.getDashboardKpi(
         req.query,
         req.user,
-        { authHeader, requestId },
+        this.extractCallOptions(req),
       );
       return res.status(200).json({
         success: true,
@@ -80,13 +77,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const authHeader = this.extractAuthHeader(req);
-      const requestId =
-        (req as any).id || (req.headers["x-request-id"] as string);
       const summary = await this.service.getDashboardSummary(
         req.query,
         req.user,
-        { authHeader, requestId },
+        this.extractCallOptions(req),
       );
       return res.status(200).json({
         success: true,
@@ -103,13 +97,10 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
-      const authHeader = this.extractAuthHeader(req);
-      const requestId =
-        (req as any).id || (req.headers["x-request-id"] as string);
       const hourlyRisk = await this.service.getHourlyRisk(
         req.query,
         req.user,
-        { authHeader, requestId },
+        this.extractCallOptions(req),
       );
       return res.status(200).json({
         success: true,

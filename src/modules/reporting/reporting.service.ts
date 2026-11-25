@@ -174,7 +174,7 @@ export class ReportingService {
   async getDashboardKpi(
     filter: DashboardKpiFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<DashboardKpiDto> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
 
@@ -249,7 +249,7 @@ export class ReportingService {
   async getDashboardSummary(
     filter: DashboardFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<StatisticsSummaryDto> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
     return this.repository.getIncidentSummary(scopedFilter, callOptions);
@@ -258,7 +258,7 @@ export class ReportingService {
   async getHourlyRisk(
     filter: HourlyRiskFilterDto,
     user?: { role?: string; siteIds?: string[]; siteId?: string },
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<HourlyRiskResponseDto> {
     const scopedFilter = this.resolveTenantSiteFilter(filter, user);
     return this.repository.getHourlyRisk(scopedFilter, callOptions);

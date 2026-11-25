@@ -2,6 +2,8 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   dashboardFilterSchema,
+  dashboardKpiFilterSchema,
+  hourlyRiskFilterSchema,
   trendsFilterSchema,
   cameraStatsFilterSchema,
   aiPerformanceFilterSchema,
@@ -271,6 +273,14 @@ describe("Security Patch Verification: SEC-07, SEC-11, SEC-12, SEC-13", () => {
       // 4. AI Performance schema
       assert.equal(aiPerformanceFilterSchema.safeParse(wideDateRange).success, false);
       assert.equal(aiPerformanceFilterSchema.safeParse(validDateRange).success, true);
+
+      // 5. Hourly Risk schema
+      assert.equal(hourlyRiskFilterSchema.safeParse(wideDateRange).success, false);
+      assert.equal(hourlyRiskFilterSchema.safeParse(validDateRange).success, true);
+
+      // 6. Dashboard KPI schema
+      assert.equal(dashboardKpiFilterSchema.safeParse(wideDateRange).success, false);
+      assert.equal(dashboardKpiFilterSchema.safeParse(validDateRange).success, true);
     });
 
     test("repository queries include defensive take limit (5000) on findMany", async () => {

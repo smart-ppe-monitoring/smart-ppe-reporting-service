@@ -140,7 +140,7 @@ export function registerReportingOpenApi(): void {
     method: "get",
     path: "/statistics/hourly-risk",
     tags: ["Reporting & Statistics"],
-    summary: "Thống kê rủi ro vi phạm PPE theo 24 giờ và chia sẵn 3 ca trực (Sáng 06:00-14:00, Chiều 14:00-22:00, Đêm 22:00-06:00)",
+    summary: "Thống kê rủi ro vi phạm PPE theo 24 giờ và chia sẵn 3 ca trực (hỗ trợ 1 ngày hoặc khoảng nhiều ngày tối đa 90 ngày)",
     security: [{ BearerAuth: [] }],
     request: { query: hourlyRiskFilterSchema },
     responses: {
@@ -152,6 +152,8 @@ export function registerReportingOpenApi(): void {
               success: z.boolean().openapi({ example: true }),
               data: z.object({
                 date: z.string().openapi({ example: "2026-11-10" }),
+                startDate: z.string().optional().openapi({ example: "2026-11-04" }),
+                endDate: z.string().optional().openapi({ example: "2026-11-10" }),
                 siteId: z.string().uuid().optional(),
                 hourly: z.array(
                   z.object({

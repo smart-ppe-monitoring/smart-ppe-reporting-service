@@ -4,6 +4,7 @@ import { ReportingRepository } from "../src/modules/reporting/reporting.reposito
 import { ReportingService } from "../src/modules/reporting/reporting.service";
 import { ReportingController } from "../src/modules/reporting/reporting.controller";
 import { DashboardFilterDto, DashboardKpiDto } from "../src/modules/reporting/reporting.dto";
+import { dashboardKpiFilterSchema } from "../src/modules/reporting/reporting.validation";
 
 describe("Dashboard KPI & Real-time Fallback Suite", () => {
   describe("1. Real-time Fallback khi incident_statistics chưa có dữ liệu", () => {
@@ -158,6 +159,65 @@ describe("Dashboard KPI & Real-time Fallback Suite", () => {
           fps: 28,
         },
       });
+    });
+
+    it("should validate optional startDate/endDate in dashboardKpiFilterSchema and forward them through getDashboardKpi", async () => {
+      assert.equal(
+        dashboardKpiFilterSchema.safeParse({
+          siteId: "019313a4-23b4-7890-8123-456789abcdef",
+          startDate: "2026-11-01",
+          endDate: "2026-11-07",
+        }).success,
+        true,
+      );
+      assert.equal(
+        dashboardKpiFilterSchema.safeParse({
+          startDate: "2026-11-10",
+          endDate: "2026-11-01",
+        }).success,
+        false,
+      );
+
+      let capturedFilter: any = null;
+      const mockRepo = {
+        getIncidentSummary: async (filter: any) => {
+          capturedFilter = filter;
+          return {
+            totalIncidents: 4,
+            openIncidents: 1,
+            resolvedIncidents: 2,
+            trueViolations: 1,
+            falseAlarms: 0,
+            falseAlarmRate: 0,
+            complianceRate: 75,
+            meanTimeToResolveHours: 0.5,
+          };
+        },
+        findActiveModelDetails: async () => ({
+          name: "YOLO11m-PPE",
+          version: "1.0.0",
+          latencyMs: 18,
+          fps: 28,
+        }),
+      } as unknown as ReportingRepository;
+
+      const service = new ReportingService(mockRepo);
+      (service as any).fetchCameraStatusCounts = async () => ({
+        total: 2,
+        online: 2,
+        offline: 0,
+      });
+
+      const kpi = await service.getDashboardKpi({
+        siteId: "019313a4-23b4-7890-8123-456789abcdef",
+        startDate: "2026-11-01",
+        endDate: "2026-11-07",
+      });
+
+      assert.equal(capturedFilter.startDate, "2026-11-01");
+      assert.equal(capturedFilter.endDate, "2026-11-07");
+      assert.equal(kpi.totalIncidents, 4);
+      assert.equal(kpi.complianceRate, 75);
     });
   });
 

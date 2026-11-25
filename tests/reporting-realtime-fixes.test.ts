@@ -417,4 +417,118 @@ describe("Reporting Realtime Fallback, Pagination, MTTR & Export Fixes", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("6. getCameraRankings falls back to realtime incidents when report_statistics only has zero-count rows", async () => {
+    const cam1 = "019447e1-8892-7000-8000-000000000010";
+    const mockPrisma = {
+      reportStatistic: {
+        findMany: async () => [
+          {
+            id: "zero-stat-1",
+            siteId: "019447e1-8891-7000-8000-000000000002",
+            cameraId: cam1,
+            violationType: "NO_HELMET",
+            severity: "HIGH",
+            statDate: new Date("2026-11-24"),
+            totalCount: 0,
+            confirmedCount: 0,
+            resolvedCount: 0,
+          },
+        ],
+      },
+    };
+
+    const repo = new ReportingRepository(mockPrisma);
+    const rankings = await repo.getCameraRankings(
+      { siteId: "019447e1-8891-7000-8000-000000000002", limit: 5 },
+      {
+        getRealtimeIncidents: async () => [
+          { id: "r1", cameraId: cam1, status: "CONFIRMED" },
+          { id: "r2", cameraId: cam1, status: "DISMISSED" },
+          { id: "r3", cameraId: cam1, status: "RESOLVED" },
+        ],
+      },
+    );
+
+    assert.equal(rankings.length, 1);
+    assert.deepEqual(rankings[0], {
+      cameraId: cam1,
+      totalViolations: 3,
+      confirmedCount: 1,
+      falseAlarmCount: 1,
+      resolvedCount: 1,
+    });
+  });
+
+  it("7. getIncidentSummary computes actual meanTimeToResolveHours and severity actualMttrMinutes when rollup exists and callOptions is provided", async () => {
+    const base = new Date("2026-11-24T01:00:00.000Z");
+    const mockPrisma = {
+      incidentStatistic: {
+        findMany: async () => [
+          {
+            siteId: "019447e1-8891-7000-8000-000000000002",
+            statDate: new Date("2026-11-24"),
+            totalIncidents: 3,
+            openIncidents: 0,
+            resolvedIncidents: 2,
+            falseAlarms: 0,
+            trueViolations: 1,
+          },
+        ],
+      },
+      reportStatistic: {
+        findMany: async () => [
+          {
+            severity: "CRITICAL",
+            totalCount: 1,
+            resolvedCount: 1,
+          },
+          {
+            severity: "HIGH",
+            totalCount: 2,
+            resolvedCount: 1,
+          },
+        ],
+      },
+    };
+
+    const repo = new ReportingRepository(mockPrisma);
+    const summary = await repo.getIncidentSummary(
+      {
+        siteId: "019447e1-8891-7000-8000-000000000002",
+        startDate: "2026-11-24",
+        endDate: "2026-11-24",
+      },
+      {
+        getRealtimeIncidents: async () => [
+          {
+            id: "m1",
+            status: "RESOLVED",
+            severity: "CRITICAL",
+            detectedAt: base,
+            resolvedAt: new Date(base.getTime() + 30 * 60 * 1000), // 30m
+          },
+          {
+            id: "m2",
+            status: "CLOSED",
+            severity: "HIGH",
+            detectedAt: base,
+            resolvedAt: new Date(base.getTime() + 90 * 60 * 1000), // 90m
+          },
+          {
+            id: "m3",
+            status: "CONFIRMED",
+            severity: "HIGH",
+            detectedAt: base,
+          },
+        ],
+      },
+    );
+
+    // (30 + 90) / 2 = 60 mins = 1 hour
+    assert.equal(summary.meanTimeToResolveHours, 1);
+    assert.equal(summary.severityBreakdown.CRITICAL.actualMttrMinutes, 30);
+    assert.equal(summary.severityBreakdown.HIGH.actualMttrMinutes, 90);
+    assert.equal(summary.severityBreakdown.MEDIUM.actualMttrMinutes, 0);
+  });
 });

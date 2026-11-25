@@ -211,6 +211,72 @@ export class ReportingRepository {
     return this.fetchRealtimeIncidentsFromIncidentService(filter, callOptions);
   }
 
+  private computeResolutionMetrics(incidents: any[]): {
+    actualMttrBySeverity: Record<keyof SeverityBreakdownMapDto, number>;
+    meanTimeToResolveHours: number;
+  } {
+    const resolutionMinutesMap: Record<keyof SeverityBreakdownMapDto, number[]> = {
+      CRITICAL: [],
+      HIGH: [],
+      MEDIUM: [],
+      LOW: [],
+    };
+
+    for (const inc of incidents) {
+      const status = String(inc.status || "").toUpperCase();
+      if (status !== "RESOLVED" && status !== "CLOSED") continue;
+
+      const sev = String(inc.severity || "NORMAL").toUpperCase();
+      let sevKey: keyof SeverityBreakdownMapDto = "LOW";
+      if (sev === "CRITICAL") sevKey = "CRITICAL";
+      else if (sev === "HIGH") sevKey = "HIGH";
+      else if (sev === "MEDIUM" || sev === "NORMAL") sevKey = "MEDIUM";
+
+      if (inc.detectedAt && (inc.resolvedAt || inc.updatedAt)) {
+        const resolvedTime = new Date(inc.resolvedAt || inc.updatedAt).getTime();
+        const detectedTime = new Date(inc.detectedAt).getTime();
+        const diffMinutes = Math.max(
+          0,
+          Math.round((resolvedTime - detectedTime) / (1000 * 60)),
+        );
+        if (!isNaN(diffMinutes) && diffMinutes > 0) {
+          resolutionMinutesMap[sevKey].push(diffMinutes);
+        }
+      }
+    }
+
+    const actualMttrBySeverity: Record<keyof SeverityBreakdownMapDto, number> = {
+      CRITICAL: 0,
+      HIGH: 0,
+      MEDIUM: 0,
+      LOW: 0,
+    };
+    const allResolutionMinutes: number[] = [];
+
+    for (const key of ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const) {
+      const recorded = resolutionMinutesMap[key];
+      if (recorded.length > 0) {
+        actualMttrBySeverity[key] = Math.round(
+          recorded.reduce((a, b) => a + b, 0) / recorded.length,
+        );
+        allResolutionMinutes.push(...recorded);
+      }
+    }
+
+    const meanTimeToResolveHours =
+      allResolutionMinutes.length > 0
+        ? Number(
+            (
+              allResolutionMinutes.reduce((sum, mins) => sum + mins, 0) /
+              allResolutionMinutes.length /
+              60
+            ).toFixed(2),
+          )
+        : 0;
+
+    return { actualMttrBySeverity, meanTimeToResolveHours };
+  }
+
   computeSummaryFromIncidentList(
     incidents: any[],
     filter: DashboardFilterDto,
@@ -226,13 +292,6 @@ export class ReportingRepository {
       HIGH: { count: 0, resolved: 0, targetSlaMinutes: 30, actualMttrMinutes: 0 },
       MEDIUM: { count: 0, resolved: 0, targetSlaMinutes: 60, actualMttrMinutes: 0 },
       LOW: { count: 0, resolved: 0, targetSlaMinutes: 120, actualMttrMinutes: 0 },
-    };
-
-    const resolutionMinutesMap = {
-      CRITICAL: [] as number[],
-      HIGH: [] as number[],
-      MEDIUM: [] as number[],
-      LOW: [] as number[],
     };
 
     for (const inc of incidents) {
@@ -258,23 +317,13 @@ export class ReportingRepository {
 
       if (status === "RESOLVED" || status === "CLOSED") {
         severityBreakdown[sevKey].resolved++;
-        if (inc.detectedAt && (inc.resolvedAt || inc.updatedAt)) {
-          const resolvedTime = new Date(inc.resolvedAt || inc.updatedAt).getTime();
-          const detectedTime = new Date(inc.detectedAt).getTime();
-          const diffMinutes = Math.max(0, Math.round((resolvedTime - detectedTime) / (1000 * 60)));
-          if (!isNaN(diffMinutes) && diffMinutes > 0) {
-            resolutionMinutesMap[sevKey].push(diffMinutes);
-          }
-        }
       }
     }
 
+    const { actualMttrBySeverity, meanTimeToResolveHours } =
+      this.computeResolutionMetrics(incidents);
     for (const key of ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const) {
-      const recorded = resolutionMinutesMap[key];
-      if (recorded.length > 0) {
-        const avg = Math.round(recorded.reduce((a, b) => a + b, 0) / recorded.length);
-        severityBreakdown[key].actualMttrMinutes = avg;
-      }
+      severityBreakdown[key].actualMttrMinutes = actualMttrBySeverity[key];
     }
 
     const reviewedCount = trueViolations + falseAlarms;
@@ -292,23 +341,6 @@ export class ReportingRepository {
             ).toFixed(2),
           )
         : 100;
-
-    const allResolutionMinutes = [
-      ...resolutionMinutesMap.CRITICAL,
-      ...resolutionMinutesMap.HIGH,
-      ...resolutionMinutesMap.MEDIUM,
-      ...resolutionMinutesMap.LOW,
-    ];
-    const meanTimeToResolveHours =
-      allResolutionMinutes.length > 0
-        ? Number(
-            (
-              allResolutionMinutes.reduce((sum, mins) => sum + mins, 0) /
-              allResolutionMinutes.length /
-              60
-            ).toFixed(2),
-          )
-        : 0;
 
     return {
       totalIncidents,
@@ -540,11 +572,26 @@ export class ReportingRepository {
         : 100;
 
     // SEC-25: Loại bỏ hằng số ảo 2.5h MTTR; tính toán MTTR thực tế từ thời gian giải quyết thực tế (hoặc 0 khi chưa theo dõi thời lượng)
-    const totalResolutionHours = 0;
-    const meanTimeToResolveHours =
-      resolvedIncidents > 0
-        ? Number((totalResolutionHours / resolvedIncidents).toFixed(2))
-        : 0;
+    let meanTimeToResolveHours = 0;
+    let resolvedMttrBySeverity: Record<keyof SeverityBreakdownMapDto, number> | null = null;
+    if (
+      resolvedIncidents > 0 &&
+      (callOptions?.authHeader || typeof callOptions?.getRealtimeIncidents === "function")
+    ) {
+      try {
+        const realtimeIncidents = await this.resolveRealtimeIncidents(
+          filter,
+          callOptions,
+        );
+        if (realtimeIncidents && realtimeIncidents.length > 0) {
+          const metrics = this.computeResolutionMetrics(realtimeIncidents);
+          meanTimeToResolveHours = metrics.meanTimeToResolveHours;
+          resolvedMttrBySeverity = metrics.actualMttrBySeverity;
+        }
+      } catch {
+        // Giữ 0 an toàn nếu dịch vụ sự cố không phản hồi
+      }
+    }
 
     const severityBreakdown: SeverityBreakdownMapDto = {
       CRITICAL: { count: 0, resolved: 0, targetSlaMinutes: 15, actualMttrMinutes: 0 },
@@ -574,6 +621,12 @@ export class ReportingRepository {
       // Bỏ qua lỗi truy vấn phụ nếu có
     }
 
+    if (resolvedMttrBySeverity) {
+      for (const key of ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const) {
+        severityBreakdown[key].actualMttrMinutes = resolvedMttrBySeverity[key];
+      }
+    }
+
     return {
       totalIncidents,
       openIncidents,
@@ -594,14 +647,16 @@ export class ReportingRepository {
    */
   async getHourlyRisk(
     filter: HourlyRiskFilterDto,
-    callOptions?: { authHeader?: string; requestId?: string },
+    callOptions?: ReportingCallOptions,
   ): Promise<HourlyRiskResponseDto> {
-    const targetDate =
-      filter.date ||
-      filter.startDate ||
-      formatVietnamDate(new Date(), "YYYY-MM-DD");
+    const today = formatVietnamDate(new Date(), "YYYY-MM-DD");
+    const resolvedStartDate =
+      filter.startDate || filter.date || filter.endDate || today;
+    const resolvedEndDate =
+      filter.endDate || filter.date || filter.startDate || today;
 
-    const { startOfDay, endOfDay } = getVietnamDayRange(targetDate);
+    const { startOfDay } = getVietnamDayRange(resolvedStartDate);
+    const { endOfDay } = getVietnamDayRange(resolvedEndDate);
 
     const hourly: HourlyRiskItemDto[] = Array.from({ length: 24 }, (_, hour) => {
       const shift: "MORNING" | "AFTERNOON" | "NIGHT" =
@@ -625,7 +680,7 @@ export class ReportingRepository {
       };
     });
 
-    const realtimeIncidents = await this.fetchRealtimeIncidentsFromIncidentService(
+    const realtimeIncidents = await this.resolveRealtimeIncidents(
       {
         siteId: filter.siteId,
         startDate: startOfDay.toISOString(),
@@ -746,7 +801,12 @@ export class ReportingRepository {
     }
 
     return {
-      date: targetDate,
+      date:
+        resolvedStartDate === resolvedEndDate
+          ? resolvedStartDate
+          : `${resolvedStartDate}..${resolvedEndDate}`,
+      startDate: resolvedStartDate,
+      endDate: resolvedEndDate,
       siteId: filter.siteId,
       hourly,
       shifts,
@@ -953,6 +1013,8 @@ export class ReportingRepository {
       }
     >();
 
+    let totalCameraViolations = 0;
+
     for (const r of rows) {
       if (!r.cameraId) continue;
       const camId = r.cameraId;
@@ -964,6 +1026,7 @@ export class ReportingRepository {
       };
 
       item.totalViolations += r.totalCount;
+      totalCameraViolations += r.totalCount;
       item.confirmedCount += r.confirmedCount;
       // SEC-38: Không gán nhầm các vi phạm chưa kiểm duyệt thành cảnh báo sai
       item.falseAlarmCount += (r as any).falseAlarmCount ?? 0;
@@ -973,7 +1036,7 @@ export class ReportingRepository {
 
     const limit = filter.limit || 10;
 
-    if (rows.length === 0 || cameraMap.size === 0) {
+    if (rows.length === 0 || cameraMap.size === 0 || totalCameraViolations === 0) {
       const realtimeIncidents = await this.resolveRealtimeIncidents(
         filter,
         callOptions,
