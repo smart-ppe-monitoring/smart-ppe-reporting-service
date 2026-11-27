@@ -409,6 +409,16 @@ export const activeModelVersionQuerySchema = z.object({
     .optional(),
 });
 
+export const reportContentQuerySchema = z.object({
+  groupBy: z
+    .enum([
+      STATISTIC_GROUP_BY.DAY,
+      STATISTIC_GROUP_BY.WEEK,
+      STATISTIC_GROUP_BY.MONTH,
+    ])
+    .optional(),
+});
+
 export const uuidParamSchema = z.object({
   id: z.string().uuid("Invalid UUID parameter"),
 });

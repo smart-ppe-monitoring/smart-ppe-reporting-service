@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import { ReportingService, AuditLogger } from "./reporting.service";
 import {
+  STATISTIC_GROUP_BY,
+  StatisticGroupBy,
+} from "../../common/constants/reporting.constant";
+import {
   DashboardFilterDto,
   DashboardKpiFilterDto,
   HourlyRiskFilterDto,
@@ -384,11 +388,22 @@ export class ReportingController {
     next: NextFunction,
   ) => {
     try {
+      const rawGroupBy = req.query?.groupBy;
+      const validGroupBy: StatisticGroupBy | undefined =
+        rawGroupBy === STATISTIC_GROUP_BY.DAY ||
+        rawGroupBy === STATISTIC_GROUP_BY.WEEK ||
+        rawGroupBy === STATISTIC_GROUP_BY.MONTH
+          ? rawGroupBy
+          : undefined;
+      const callOptions = validGroupBy
+        ? { ...this.extractCallOptions(req), groupBy: validGroupBy }
+        : this.extractCallOptions(req);
+
       const file = await this.service.getReportGenerationContent(
         req.params.id,
         req.user?.id,
         req.user?.role,
-        this.extractCallOptions(req),
+        callOptions,
         this.extractUserSiteIds(req),
       );
       res.setHeader("Content-Type", file.contentType);

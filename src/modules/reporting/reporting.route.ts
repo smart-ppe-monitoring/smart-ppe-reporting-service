@@ -20,6 +20,7 @@ import {
   createReportTemplateSchema,
   generateReportSchema,
   reportHistoryQuerySchema,
+  reportContentQuerySchema,
   createAiModelSchema,
   createAiModelVersionSchema,
   activeModelVersionQuerySchema,
@@ -171,6 +172,7 @@ reportRouter.get(
     PERMISSIONS.PPE_REPORTING_EXPORT,
   ),
   validate(uuidParamSchema, "params"),
+  validate(reportContentQuerySchema, "query"),
   controller.getReportGenerationContent,
 );
 

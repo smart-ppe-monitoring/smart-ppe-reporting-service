@@ -49,6 +49,7 @@ import {
   AI_MODEL_STATUS,
   AI_MODEL_VERSION_STATUS,
   STATISTIC_GROUP_BY,
+  StatisticGroupBy,
 } from "../../common/constants/reporting.constant";
 import { AppError } from "../../common/errors/app-error";
 import { ERROR_CODE } from "../../common/errors/error-code";
@@ -56,10 +57,17 @@ import { ERROR_CODE } from "../../common/errors/error-code";
 export interface ReportingCallOptions {
   authHeader?: string;
   requestId?: string;
+  groupBy?: StatisticGroupBy;
   getRealtimeIncidents?: () => Promise<any[] | null>;
 }
 
 const MAX_REALTIME_PAGES = 10;
+const MAX_ENUMERATED_DAYS = 366;
+
+interface RollupCoverage {
+  rolledUpDates: Set<string>;
+  rolledUpSiteDates: Set<string>;
+}
 
 function normalizeIncidentDateBoundary(
   dateStr: string,
@@ -75,6 +83,84 @@ function normalizeIncidentDateBoundary(
     }
   }
   return trimmed;
+}
+
+function normalizeStatDateKey(
+  statDate: Date | string | null | undefined,
+): string | null {
+  if (!statDate) return null;
+  if (statDate instanceof Date) {
+    return isNaN(statDate.getTime()) ? null : statDate.toISOString().slice(0, 10);
+  }
+  const str = String(statDate).trim();
+  const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = new Date(str);
+  return isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+function getIncidentVietnamDateKey(inc: any): string | null {
+  const rawDate = inc?.detectedAt || inc?.createdAt;
+  if (!rawDate) return null;
+  const d = new Date(rawDate);
+  if (isNaN(d.getTime())) return null;
+  return formatVietnamDate(d, "YYYY-MM-DD");
+}
+
+function enumerateIsoDateRange(startDate: string, endDate: string): string[] {
+  const startMatch = startDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const endMatch = endDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!startMatch || !endMatch || startDate > endDate) {
+    return [];
+  }
+  const cursor = new Date(
+    Date.UTC(Number(startMatch[1]), Number(startMatch[2]) - 1, Number(startMatch[3])),
+  );
+  const endUtc = new Date(
+    Date.UTC(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3])),
+  );
+  const days: string[] = [];
+  while (cursor.getTime() <= endUtc.getTime() && days.length < MAX_ENUMERATED_DAYS) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
+function buildRollupCoverage<
+  T extends { statDate?: Date | string | null; siteId?: string | null },
+>(rows: T[], getCount: (row: T) => number): RollupCoverage {
+  const dateTotals = new Map<string, number>();
+  const siteDateTotals = new Map<string, number>();
+
+  for (const row of rows) {
+    const dateKey = normalizeStatDateKey(row.statDate);
+    if (!dateKey) continue;
+    const count = Number(getCount(row)) || 0;
+    dateTotals.set(dateKey, (dateTotals.get(dateKey) ?? 0) + count);
+
+    const siteId = typeof row.siteId === "string" ? row.siteId.trim() : "";
+    if (siteId) {
+      const siteDateKey = `${siteId}|${dateKey}`;
+      siteDateTotals.set(siteDateKey, (siteDateTotals.get(siteDateKey) ?? 0) + count);
+    }
+  }
+
+  const rolledUpDates = new Set<string>();
+  for (const [dateKey, total] of dateTotals.entries()) {
+    if (total > 0) {
+      rolledUpDates.add(dateKey);
+    }
+  }
+
+  const rolledUpSiteDates = new Set<string>();
+  for (const [siteDateKey, total] of siteDateTotals.entries()) {
+    if (total > 0) {
+      rolledUpSiteDates.add(siteDateKey);
+    }
+  }
+
+  return { rolledUpDates, rolledUpSiteDates };
 }
 
 function extractPagedIncidents(res: { data?: any; meta?: any }): {
@@ -217,6 +303,117 @@ export class ReportingRepository {
       return callOptions.getRealtimeIncidents();
     }
     return this.fetchRealtimeIncidentsFromIncidentService(filter, callOptions);
+  }
+
+  private hasRealtimeCallCapability(callOptions?: ReportingCallOptions): boolean {
+    return Boolean(
+      callOptions?.authHeader ||
+        typeof callOptions?.getRealtimeIncidents === "function" ||
+        Object.prototype.hasOwnProperty.call(
+          this,
+          "fetchRealtimeIncidentsFromIncidentService",
+        ),
+    );
+  }
+
+  private resolvePartialRealtimePlan(
+    filter: DashboardFilterDto,
+    coverage: RollupCoverage,
+  ): { shouldFetch: boolean; realtimeFilter: DashboardFilterDto } {
+    const startDay = normalizeStatDateKey(filter.startDate);
+    const endDay = normalizeStatDateKey(filter.endDate);
+    const todayVn = formatVietnamDate(new Date(), "YYYY-MM-DD");
+
+    if (!filter.siteId) {
+      return { shouldFetch: true, realtimeFilter: filter };
+    }
+
+    if (startDay && endDay) {
+      if (startDay > endDay) {
+        return { shouldFetch: false, realtimeFilter: filter };
+      }
+      const missingDays = enumerateIsoDateRange(startDay, endDay).filter(
+        (d) => !coverage.rolledUpDates.has(d),
+      );
+      if (missingDays.length === 0) {
+        return { shouldFetch: false, realtimeFilter: filter };
+      }
+      return {
+        shouldFetch: true,
+        realtimeFilter: {
+          ...filter,
+          startDate: missingDays[0],
+          endDate: missingDays[missingDays.length - 1],
+        },
+      };
+    }
+
+    if (startDay && !endDay) {
+      if (startDay <= todayVn) {
+        const missingDays = enumerateIsoDateRange(startDay, todayVn).filter(
+          (d) => !coverage.rolledUpDates.has(d),
+        );
+        if (missingDays.length === 0) {
+          return { shouldFetch: false, realtimeFilter: filter };
+        }
+        return {
+          shouldFetch: true,
+          realtimeFilter: {
+            ...filter,
+            startDate: missingDays[0],
+          },
+        };
+      }
+      return { shouldFetch: true, realtimeFilter: filter };
+    }
+
+    return { shouldFetch: true, realtimeFilter: filter };
+  }
+
+  private filterUnrolledRealtimeIncidents(
+    incidents: any[],
+    filter: DashboardFilterDto,
+    coverage: RollupCoverage,
+  ): any[] {
+    const startDay = normalizeStatDateKey(filter.startDate);
+    const endDay = normalizeStatDateKey(filter.endDate);
+
+    return incidents.filter((inc) => {
+      const incSiteId =
+        typeof inc?.siteId === "string" ? inc.siteId.trim() : "";
+      if (filter.siteId && incSiteId && incSiteId !== filter.siteId) {
+        return false;
+      }
+
+      const dateKey = getIncidentVietnamDateKey(inc);
+      if (!dateKey) {
+        return false;
+      }
+
+      if ((startDay && dateKey < startDay) || (endDay && dateKey > endDay)) {
+        return false;
+      }
+
+      if (filter.siteId) {
+        return !coverage.rolledUpDates.has(dateKey);
+      }
+
+      if (incSiteId && coverage.rolledUpSiteDates.size > 0) {
+        return !coverage.rolledUpSiteDates.has(`${incSiteId}|${dateKey}`);
+      }
+
+      return !coverage.rolledUpDates.has(dateKey);
+    });
+  }
+
+  private mapSeverityToSlaKey(
+    severity: unknown,
+  ): keyof SeverityBreakdownMapDto {
+    const sev = String(severity || "NORMAL").toUpperCase();
+    if (sev === "CRITICAL") return "CRITICAL";
+    if (sev === "HIGH") return "HIGH";
+    if (sev === "MEDIUM" || sev === "NORMAL") return "MEDIUM";
+    return "LOW";
   }
 
   private computeResolutionMetrics(incidents: any[]): {
@@ -562,6 +759,58 @@ export class ReportingRepository {
       }
     }
 
+    const incidentCoverage = buildRollupCoverage(
+      rows,
+      (r) => r.totalIncidents,
+    );
+    const partialPlan = this.resolvePartialRealtimePlan(
+      filter,
+      incidentCoverage,
+    );
+
+    let realtimeIncidents: any[] | null = null;
+    if (
+      this.hasRealtimeCallCapability(callOptions) &&
+      (partialPlan.shouldFetch || resolvedIncidents > 0)
+    ) {
+      const fetchFilter =
+        resolvedIncidents > 0 ? filter : partialPlan.realtimeFilter;
+      try {
+        realtimeIncidents = await this.resolveRealtimeIncidents(
+          fetchFilter,
+          callOptions,
+        );
+      } catch {
+        // Giữ dữ liệu rollup an toàn nếu dịch vụ sự cố không phản hồi
+        realtimeIncidents = null;
+      }
+    }
+
+    if (
+      partialPlan.shouldFetch &&
+      realtimeIncidents &&
+      realtimeIncidents.length > 0
+    ) {
+      const unrolledIncidents = this.filterUnrolledRealtimeIncidents(
+        realtimeIncidents,
+        filter,
+        incidentCoverage,
+      );
+      for (const inc of unrolledIncidents) {
+        totalIncidents++;
+        const status = String(inc.status || "").toUpperCase();
+        if (status === "PENDING_REVIEW") {
+          openIncidents++;
+        } else if (status === "CONFIRMED") {
+          trueViolations++;
+        } else if (status === "DISMISSED") {
+          falseAlarms++;
+        } else if (status === "RESOLVED" || status === "CLOSED") {
+          resolvedIncidents++;
+        }
+      }
+    }
+
     const reviewedCount = trueViolations + falseAlarms;
     const falseAlarmRate =
       reviewedCount > 0
@@ -584,21 +833,12 @@ export class ReportingRepository {
     let resolvedMttrBySeverity: Record<keyof SeverityBreakdownMapDto, number> | null = null;
     if (
       resolvedIncidents > 0 &&
-      (callOptions?.authHeader || typeof callOptions?.getRealtimeIncidents === "function")
+      realtimeIncidents &&
+      realtimeIncidents.length > 0
     ) {
-      try {
-        const realtimeIncidents = await this.resolveRealtimeIncidents(
-          filter,
-          callOptions,
-        );
-        if (realtimeIncidents && realtimeIncidents.length > 0) {
-          const metrics = this.computeResolutionMetrics(realtimeIncidents);
-          meanTimeToResolveHours = metrics.meanTimeToResolveHours;
-          resolvedMttrBySeverity = metrics.actualMttrBySeverity;
-        }
-      } catch {
-        // Giữ 0 an toàn nếu dịch vụ sự cố không phản hồi
-      }
+      const metrics = this.computeResolutionMetrics(realtimeIncidents);
+      meanTimeToResolveHours = metrics.meanTimeToResolveHours;
+      resolvedMttrBySeverity = metrics.actualMttrBySeverity;
     }
 
     const severityBreakdown: SeverityBreakdownMapDto = {
@@ -608,25 +848,51 @@ export class ReportingRepository {
       LOW: { count: 0, resolved: 0, targetSlaMinutes: 120, actualMttrMinutes: 0 },
     };
 
+    let statRows: any[] = [];
+    let statRowsTotal = 0;
     try {
-      const statRows = await this.prisma.reportStatistic.findMany({
+      statRows = await this.prisma.reportStatistic.findMany({
         where,
         take: 5000,
       });
 
       for (const s of statRows) {
-        const sev = String(s.severity || "NORMAL").toUpperCase();
-        let sevKey: keyof SeverityBreakdownMapDto = "LOW";
-        if (sev === "CRITICAL") sevKey = "CRITICAL";
-        else if (sev === "HIGH") sevKey = "HIGH";
-        else if (sev === "MEDIUM" || sev === "NORMAL") sevKey = "MEDIUM";
-        else sevKey = "LOW";
-
+        const sevKey = this.mapSeverityToSlaKey(s.severity);
+        statRowsTotal += Number(s.totalCount) || 0;
         severityBreakdown[sevKey].count += s.totalCount;
         severityBreakdown[sevKey].resolved += s.resolvedCount;
       }
     } catch {
       // Bỏ qua lỗi truy vấn phụ nếu có
+    }
+
+    if (realtimeIncidents && realtimeIncidents.length > 0) {
+      const reportStatCoverage = buildRollupCoverage(
+        statRows,
+        (s) => s.totalCount,
+      );
+      const hasReportStatDates = statRows.some(
+        (s: any) => normalizeStatDateKey(s.statDate) !== null,
+      );
+      const effectiveSeverityCoverage =
+        statRowsTotal > 0 && !hasReportStatDates
+          ? incidentCoverage
+          : reportStatCoverage;
+
+      const unrolledForSeverity = this.filterUnrolledRealtimeIncidents(
+        realtimeIncidents,
+        filter,
+        effectiveSeverityCoverage,
+      );
+
+      for (const inc of unrolledForSeverity) {
+        const sevKey = this.mapSeverityToSlaKey(inc.severity);
+        severityBreakdown[sevKey].count++;
+        const status = String(inc.status || "").toUpperCase();
+        if (status === "RESOLVED" || status === "CLOSED") {
+          severityBreakdown[sevKey].resolved++;
+        }
+      }
     }
 
     if (resolvedMttrBySeverity) {
@@ -895,7 +1161,58 @@ export class ReportingRepository {
       }
     }
 
-    return Array.from(groups.values());
+    const incidentCoverage = buildRollupCoverage(
+      rows,
+      (r) => r.totalIncidents,
+    );
+    const partialPlan = this.resolvePartialRealtimePlan(
+      filter,
+      incidentCoverage,
+    );
+
+    if (partialPlan.shouldFetch && this.hasRealtimeCallCapability(callOptions)) {
+      let realtimeIncidents: any[] | null = null;
+      try {
+        realtimeIncidents = await this.resolveRealtimeIncidents(
+          partialPlan.realtimeFilter,
+          callOptions,
+        );
+      } catch {
+        realtimeIncidents = null;
+      }
+
+      if (realtimeIncidents && realtimeIncidents.length > 0) {
+        const unrolledIncidents = this.filterUnrolledRealtimeIncidents(
+          realtimeIncidents,
+          filter,
+          incidentCoverage,
+        );
+        if (unrolledIncidents.length > 0) {
+          const realtimeTrends = this.computeTrendsFromIncidentList(
+            unrolledIncidents,
+            groupBy,
+          );
+          for (const rt of realtimeTrends) {
+            const existing = groups.get(rt.date) || {
+              date: rt.date,
+              totalIncidents: 0,
+              trueViolations: 0,
+              falseAlarms: 0,
+              resolvedCount: 0,
+            };
+            existing.totalIncidents += rt.totalIncidents;
+            existing.trueViolations += rt.trueViolations;
+            existing.falseAlarms += rt.falseAlarms;
+            existing.resolvedCount += rt.resolvedCount;
+            groups.set(rt.date, existing);
+          }
+        }
+      }
+    }
+
+    return Array.from(groups.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
   }
 
   // ── 3. Violation Type & Severity Breakdown ──────────────────────────────────
@@ -970,6 +1287,50 @@ export class ReportingRepository {
       );
       if (realtimeIncidents && realtimeIncidents.length > 0) {
         return this.computeViolationBreakdownFromIncidentList(realtimeIncidents);
+      }
+    }
+
+    const reportCoverage = buildRollupCoverage(rows, (r) => r.totalCount);
+    const partialPlan = this.resolvePartialRealtimePlan(filter, reportCoverage);
+
+    if (partialPlan.shouldFetch && this.hasRealtimeCallCapability(callOptions)) {
+      let realtimeIncidents: any[] | null = null;
+      try {
+        realtimeIncidents = await this.resolveRealtimeIncidents(
+          partialPlan.realtimeFilter,
+          callOptions,
+        );
+      } catch {
+        realtimeIncidents = null;
+      }
+
+      if (realtimeIncidents && realtimeIncidents.length > 0) {
+        const unrolledIncidents = this.filterUnrolledRealtimeIncidents(
+          realtimeIncidents,
+          filter,
+          reportCoverage,
+        );
+        for (const inc of unrolledIncidents) {
+          grandTotal++;
+          const vType = inc.violationType || "UNKNOWN";
+          const item = breakdownMap.get(vType) || {
+            count: 0,
+            severityBreakdown: {
+              LOW: 0,
+              NORMAL: 0,
+              MEDIUM: 0,
+              HIGH: 0,
+              CRITICAL: 0,
+            },
+          };
+
+          item.count++;
+          const sev = String(inc.severity || "NORMAL").toUpperCase();
+          if (Object.prototype.hasOwnProperty.call(item.severityBreakdown, sev)) {
+            (item.severityBreakdown as any)[sev]++;
+          }
+          breakdownMap.set(vType, item);
+        }
       }
     }
 
@@ -1054,6 +1415,53 @@ export class ReportingRepository {
           realtimeIncidents,
           limit,
         );
+      }
+    }
+
+    const cameraCoverage = buildRollupCoverage(rows, (r) => r.totalCount);
+    const partialPlan = this.resolvePartialRealtimePlan(filter, cameraCoverage);
+
+    if (partialPlan.shouldFetch && this.hasRealtimeCallCapability(callOptions)) {
+      let realtimeIncidents: any[] | null = null;
+      try {
+        realtimeIncidents = await this.resolveRealtimeIncidents(
+          partialPlan.realtimeFilter,
+          callOptions,
+        );
+      } catch {
+        realtimeIncidents = null;
+      }
+
+      if (realtimeIncidents && realtimeIncidents.length > 0) {
+        const unrolledIncidents = this.filterUnrolledRealtimeIncidents(
+          realtimeIncidents,
+          filter,
+          cameraCoverage,
+        );
+        for (const inc of unrolledIncidents) {
+          const camId =
+            typeof inc.cameraId === "string" ? inc.cameraId.trim() : "";
+          if (!camId) continue;
+
+          const item = cameraMap.get(camId) || {
+            totalViolations: 0,
+            confirmedCount: 0,
+            falseAlarmCount: 0,
+            resolvedCount: 0,
+          };
+
+          item.totalViolations++;
+          const status = String(inc.status || "").toUpperCase();
+          if (status === "CONFIRMED") {
+            item.confirmedCount++;
+          } else if (status === "DISMISSED") {
+            item.falseAlarmCount++;
+          } else if (status === "RESOLVED" || status === "CLOSED") {
+            item.resolvedCount++;
+          }
+
+          cameraMap.set(camId, item);
+        }
       }
     }
 
@@ -2003,18 +2411,24 @@ export class ReportingRepository {
     const sharedCallOptions: ReportingCallOptions = {
       ...callOptions,
       getRealtimeIncidents: () => {
-        if (typeof callOptions?.getRealtimeIncidents === "function") {
-          return callOptions.getRealtimeIncidents();
-        }
         if (!sharedRealtimePromise) {
-          sharedRealtimePromise = this.fetchRealtimeIncidentsFromIncidentService(
-            filter,
-            callOptions,
-          );
+          sharedRealtimePromise =
+            typeof callOptions?.getRealtimeIncidents === "function"
+              ? callOptions.getRealtimeIncidents()
+              : this.fetchRealtimeIncidentsFromIncidentService(
+                  filter,
+                  callOptions,
+                );
         }
         return sharedRealtimePromise;
       },
     };
+
+    const resolvedGroupBy =
+      callOptions?.groupBy ||
+      (report.reportType === "MONTHLY"
+        ? STATISTIC_GROUP_BY.WEEK
+        : STATISTIC_GROUP_BY.DAY);
 
     const [summary, violationsBreakdown, cameraRankings, trends, rawAiPerformance] =
       await Promise.all([
@@ -2024,10 +2438,7 @@ export class ReportingRepository {
         this.getIncidentTrends(
           {
             ...filter,
-            groupBy:
-              report.reportType === "MONTHLY"
-                ? STATISTIC_GROUP_BY.WEEK
-                : STATISTIC_GROUP_BY.DAY,
+            groupBy: resolvedGroupBy,
           },
           sharedCallOptions,
         ),

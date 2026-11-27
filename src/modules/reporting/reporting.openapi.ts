@@ -11,6 +11,7 @@ import {
   createReportTemplateSchema,
   generateReportSchema,
   reportHistoryQuerySchema,
+  reportContentQuerySchema,
   createAiModelSchema,
   createAiModelVersionSchema,
   uuidParamSchema,
@@ -559,7 +560,10 @@ export function registerReportingOpenApi(): void {
     description:
       "Kết xuất và trả về tệp báo cáo đầy đủ số liệu (PDF, Excel, CSV UTF-8 BOM, JSON). Yêu cầu quyền PPE_REPORTING_READ hoặc PPE_REPORTING_EXPORT và tuân thủ phạm vi công trường (siteIds).",
     security: [{ BearerAuth: [] }],
-    request: { params: uuidParamSchema },
+    request: {
+      params: uuidParamSchema,
+      query: reportContentQuerySchema,
+    },
     responses: {
       200: {
         description: "Tải tệp tin báo cáo thành công",
